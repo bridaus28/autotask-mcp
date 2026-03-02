@@ -478,7 +478,7 @@ export class AutotaskService {
 
   async createTicket(ticket: Partial<AutotaskTicket>): Promise<number> {
     const client = await this.ensureClient();
-    
+
     try {
       this.logger.debug('Creating ticket:', ticket);
       const result = await client.tickets.create(ticket as any);
@@ -487,6 +487,14 @@ export class AutotaskService {
       return ticketId;
     } catch (error) {
       this.logger.error('Failed to create ticket:', error);
+      // Extract API-level validation errors from the original axios response so they
+      // surface to the caller instead of being swallowed as a generic 500 message.
+      const apiErrors: string[] | undefined =
+        (error as any)?.originalError?.response?.data?.errors ||
+        (error as any)?.response?.data?.errors;
+      if (apiErrors && apiErrors.length > 0) {
+        throw new Error(`Autotask API error: ${apiErrors.join('; ')}`);
+      }
       throw error;
     }
   }

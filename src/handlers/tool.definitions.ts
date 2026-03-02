@@ -304,7 +304,11 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         assignedResourceID: {
           type: 'number',
-          description: 'Assigned resource ID'
+          description: 'Assigned resource ID. If set, assignedResourceRoleID is also required by Autotask.'
+        },
+        assignedResourceRoleID: {
+          type: 'number',
+          description: 'Role ID for the assigned resource. Required by Autotask when assignedResourceID is set.'
         },
         contactID: {
           type: 'number',

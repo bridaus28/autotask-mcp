@@ -1,3 +1,11 @@
+## [Unreleased]
+
+### Fixed
+- `autotask_create_ticket` now surfaces Autotask API validation errors (e.g. "When assigning a Resource, you must assign both a assignedResourceID and assignedResourceRoleID.") instead of returning a generic "Server error (500): Internal Server Error" (#32)
+
+### Added
+- `assignedResourceRoleID` parameter to `autotask_create_ticket` tool schema; Autotask requires this field whenever `assignedResourceID` is set
+
 ## [2.7.3](https://github.com/wyre-technology/autotask-mcp/compare/v2.7.2...v2.7.3) (2026-02-23)
 
 
