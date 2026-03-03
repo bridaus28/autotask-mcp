@@ -1,3 +1,11 @@
+# [2.10.0](https://github.com/wyre-technology/autotask-mcp/compare/v2.9.0...v2.10.0) (2026-03-03)
+
+
+### Features
+
+* **tools:** add autotask_update_ticket tool ([b73c3f9](https://github.com/wyre-technology/autotask-mcp/commit/b73c3f9faee84083510bcc7e07130c0577520a34)), closes [#28](https://github.com/wyre-technology/autotask-mcp/issues/28)
+* **tools:** wire autotask_update_ticket handler ([13fe142](https://github.com/wyre-technology/autotask-mcp/commit/13fe142082f04f95c2fefc6f48d51f485dab12b4))
+
 # [2.9.0](https://github.com/wyre-technology/autotask-mcp/compare/v2.8.1...v2.9.0) (2026-03-03)
 
 
