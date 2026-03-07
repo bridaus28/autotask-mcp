@@ -30,7 +30,7 @@ import {
 import { McpServerConfig } from '../types/mcp';
 import { Logger } from '../utils/logger';
 import { FieldInfo, PicklistValue } from './picklist.cache';
-import { buildPhoneSearchVariants, normalizePhoneUS } from '../utils/phone';
+import { buildPhoneSearchVariants } from '../utils/phone';
 
 export class AutotaskService {
   private client: AutotaskClient | null = null;
@@ -227,18 +227,33 @@ export class AutotaskService {
         });
       }
 
-      // Exact phone lookup across all contact phone fields
+      // Normalized phone lookup across common US phone formats
       if (options.phone) {
-        filters.push({
-          op: 'or',
-          items: [
-            { field: 'phone', op: 'eq', value: options.phone },
-            { field: 'mobilePhone', op: 'eq', value: options.phone },
-            { field: 'alternatePhone', op: 'eq', value: options.phone }
-          ]
-        });
-      }
+        const phoneVariants = buildPhoneSearchVariants(options.phone);
+        this.logger.debug('Phone search variants', { phoneVariants });      
 
+        if (phoneVariants.length > 0) {
+          filters.push({
+            op: 'or',
+            items: phoneVariants.flatMap((phoneValue) => [
+              { field: 'phone', op: 'eq', value: phoneValue },
+              { field: 'mobilePhone', op: 'eq', value: phoneValue },
+              { field: 'alternatePhone', op: 'eq', value: phoneValue }
+            ])
+          });
+        } else {
+          // Fallback to exact raw value if normalization fails
+          filters.push({
+            op: 'or',
+            items: [
+              { field: 'phone', op: 'eq', value: options.phone },
+              { field: 'mobilePhone', op: 'eq', value: options.phone },
+              { field: 'alternatePhone', op: 'eq', value: options.phone }
+            ]
+          });
+        }
+      }
+      
       if (options.companyID !== undefined) {
         filters.push({
           op: 'eq',
