@@ -145,6 +145,10 @@ export const TOOL_DEFINITIONS: McpTool[] = [
           type: 'string',
           description: 'Search term for contact name or email'
         },
+        phone: { 
+          type: 'string', 
+          description: 'Exact phone number match against contact phone fields (phone, mobilePhone, alternatePhone)' 
+        },
         companyID: {
           type: 'number',
           description: 'Filter by company ID'
