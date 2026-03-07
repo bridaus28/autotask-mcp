@@ -348,6 +348,7 @@ export interface AutotaskQueryOptions {
   pageSize?: number;
   // Common search filters (Issue #8 fix)
   searchTerm?: string;
+  phone?: string;
   companyID?: number;
   isActive?: boolean | number;
 }
