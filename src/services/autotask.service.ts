@@ -30,6 +30,7 @@ import {
 import { McpServerConfig } from '../types/mcp';
 import { Logger } from '../utils/logger';
 import { FieldInfo, PicklistValue } from './picklist.cache';
+import { buildPhoneSearchVariants, normalizePhoneUS } from '../utils/phone';
 
 export class AutotaskService {
   private client: AutotaskClient | null = null;
