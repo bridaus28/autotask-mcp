@@ -226,6 +226,18 @@ export class AutotaskService {
         });
       }
 
+      // Exact phone lookup across all contact phone fields
+      if (options.phone) {
+        filters.push({
+          op: 'or',
+          items: [
+            { field: 'phone', op: 'eq', value: options.phone },
+            { field: 'mobilePhone', op: 'eq', value: options.phone },
+            { field: 'alternatePhone', op: 'eq', value: options.phone }
+          ]
+        });
+      }
+
       if (options.companyID !== undefined) {
         filters.push({
           op: 'eq',
