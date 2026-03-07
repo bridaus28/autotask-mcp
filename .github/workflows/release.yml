@@ -127,6 +127,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Get version from package.json
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -140,10 +144,6 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Get version from package.json
-        id: version
-        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -152,27 +152,15 @@ jobs:
           push: true
           tags: |
             ghcr.io/wyre-technology/autotask-mcp:latest
-            ghcr.io/wyre-technology/autotask-mcp:v${{ steps.release-version.outputs.version }}
+            ghcr.io/wyre-technology/autotask-mcp:v${{ steps.version.outputs.version }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            VERSION=${{ steps.release-version.outputs.version }}
+            VERSION=${{ steps.version.outputs.version }}
             COMMIT_SHA=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
 
-      - name: Discord release notification
-        if: steps.release-version.outputs.released == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: |
-          VERSION="${{ steps.release-version.outputs.version }}"
-          BODY=$(gh release view "v$VERSION" --json body --jq '.body' 2>/dev/null || echo "")
-          SUMMARY=$(echo "$BODY" | sed '1,2d' | head -30 | cut -c1-1800)
-          DESC="**${{ github.repository }}** — [v${VERSION}](https://github.com/${{ github.repository }}/releases/tag/v${VERSION})"$'\n'"${SUMMARY}"
-          PAYLOAD=$(jq -n --arg title "New Release: v${VERSION}" --arg desc "$DESC" '{embeds: [{title: $title, description: $desc, color: 5763847}]}')
-          curl -sf -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK"
   security:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -193,4 +181,4 @@ jobs:
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: 'trivy-results.sarif' 
+          sarif_file: 'trivy-results.sarif'

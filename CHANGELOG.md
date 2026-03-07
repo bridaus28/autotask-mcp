@@ -1,3 +1,13 @@
+## [2.10.3](https://github.com/wyre-technology/autotask-mcp/compare/v2.10.2...v2.10.3) (2026-03-06)
+
+
+### Bug Fixes
+
+* **deps:** update autotask-node to compiled semaphore fix ([f282e21](https://github.com/wyre-technology/autotask-mcp/commit/f282e21385e9b2640b8de7747df6070a8aecc605))
+* **gateway:** skip autotask-node connection test in stateless mode ([67643c6](https://github.com/wyre-technology/autotask-mcp/commit/67643c691d233ca0c4b760f99474203e3584a6ae))
+* **tickets:** update autotask-node lockfile with PATCH collection endpoint fix ([4156635](https://github.com/wyre-technology/autotask-mcp/commit/4156635778bbd5be427bb55c8df3472ae6a62ca5))
+* **tickets:** update autotask-node to PATCH collection endpoint fix ([0cf01d8](https://github.com/wyre-technology/autotask-mcp/commit/0cf01d87b1063d6b27a98990a297de045fe17679))
+
 ## [2.10.2](https://github.com/wyre-technology/autotask-mcp/compare/v2.10.1...v2.10.2) (2026-03-03)
 
 

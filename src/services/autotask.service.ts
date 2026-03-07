@@ -59,9 +59,13 @@ export class AutotaskService {
       const authConfig: any = {
         username,
         secret,
-        integrationCode
+        integrationCode,
+        // In gateway mode, credentials are validated per-request by the actual
+        // API calls. Skipping the /Version connection test avoids a 30s timeout
+        // on every tool invocation when running stateless/per-request.
+        skipConnectionTest: true,
       };
-      
+
       if (apiUrl) {
         authConfig.apiUrl = apiUrl;
       }
