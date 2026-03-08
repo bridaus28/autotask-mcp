@@ -30,7 +30,7 @@ import {
 import { McpServerConfig } from '../types/mcp';
 import { Logger } from '../utils/logger';
 import { FieldInfo, PicklistValue } from './picklist.cache';
-import { buildPhoneSearchVariants } from '../utils/phone';
+import { buildPhoneCandidateSearch, isExactPhoneMatch } from '../utils/phone';
 
 export class AutotaskService {
   private client: AutotaskClient | null = null;
@@ -226,32 +226,31 @@ export class AutotaskService {
           ]
         });
       }
-
-      // Normalized phone lookup across common US phone formats
+      
+      // Coarse phone lookup by last 4 digits, followed by exact local matching
       if (options.phone) {
-        const phoneVariants = buildPhoneSearchVariants(options.phone);
-        this.logger.debug('Phone search variants', { phoneVariants });      
-
-        if (phoneVariants.length > 0) {
-          filters.push({
-            op: 'or',
-            items: phoneVariants.flatMap((phoneValue) => [
-              { field: 'phone', op: 'eq', value: phoneValue },
-              { field: 'mobilePhone', op: 'eq', value: phoneValue },
-              { field: 'alternatePhone', op: 'eq', value: phoneValue }
-            ])
+        const candidateSearch = buildPhoneCandidateSearch(options.phone);
+      
+        this.logger.info('Phone candidate search', {
+          rawPhone: options.phone,
+          last4: candidateSearch.last4
+        });
+      
+        if (!candidateSearch.last4) {
+          this.logger.info('Phone candidate search could not derive last4', {
+            rawPhone: options.phone
           });
-        } else {
-          // Fallback to exact raw value if normalization fails
-          filters.push({
-            op: 'or',
-            items: [
-              { field: 'phone', op: 'eq', value: options.phone },
-              { field: 'mobilePhone', op: 'eq', value: options.phone },
-              { field: 'alternatePhone', op: 'eq', value: options.phone }
-            ]
-          });
+          return [];
         }
+      
+        filters.push({
+          op: 'or',
+          items: [
+            { field: 'phone', op: 'contains', value: candidateSearch.last4 },
+            { field: 'mobilePhone', op: 'contains', value: candidateSearch.last4 },
+            { field: 'alternatePhone', op: 'contains', value: candidateSearch.last4 }
+          ]
+        });
       }
       
       if (options.companyID !== undefined) {
@@ -278,8 +277,21 @@ export class AutotaskService {
       };
 
       const result = await client.contacts.list(queryOptions as any);
-      const contacts = (result.data as AutotaskContact[]) || [];
+      let contacts = (result.data as AutotaskContact[]) || [];
 
+      if (options.phone && contacts.length > 0) {
+        contacts = contacts.filter((contact) =>
+          isExactPhoneMatch(options.phone!, contact.phone) ||
+          isExactPhoneMatch(options.phone!, contact.mobilePhone) ||
+          isExactPhoneMatch(options.phone!, contact.alternatePhone)
+        );
+      
+        this.logger.info('Phone exact match filtering complete', {
+          rawPhone: options.phone,
+          remainingContacts: contacts.length
+        });
+      }
+      
       this.logger.info(`Retrieved ${contacts.length} contacts (page ${options.page || 1}, pageSize ${pageSize})`);
       return contacts;
     } catch (error) {
