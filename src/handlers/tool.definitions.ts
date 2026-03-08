@@ -210,7 +210,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Ticket tools
   {
     name: 'autotask_search_tickets',
-    description: 'Search for tickets in Autotask. Returns 25 results per page by default. Use page parameter for more results. Use get_ticket_details for full data on a specific ticket.',
+    description: 'Search for tickets in Autotask. Returns 25 results per page by default. Use page parameter for more results. Use get_ticket_details for full data on a specific ticket. No default status filter is applied - all tickets are returned unless you filter explicitly. Use autotask_list_ticket_statuses to find status IDs, then pass excludeStatuses to filter out closed tickets.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -218,13 +218,22 @@ export const TOOL_DEFINITIONS: McpTool[] = [
           type: 'string',
           description: 'Search by ticket number prefix'
         },
+        contactID: {
+          type: 'number',
+          description: 'Filter by contact ID. Use this when a caller asks about their tickets - you already have their contactID from the identity lookup at call start.'
+        },
         companyID: {
           type: 'number',
           description: 'Filter by company ID'
         },
         status: {
           type: 'number',
-          description: 'Filter by ticket status ID (omit for all open tickets)'
+          description: 'Filter by a single ticket status ID. Use autotask_list_ticket_statuses to find valid IDs. Omit to return tickets of all statuses.'
+        },
+        excludeStatuses: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Exclude tickets with these status IDs. Use autotask_list_ticket_statuses to find valid IDs. Useful for excluding Complete and RMM Complete when looking for open tickets.'
         },
         assignedResourceID: {
           type: 'number',
