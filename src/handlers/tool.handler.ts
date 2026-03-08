@@ -27,6 +27,13 @@ export interface McpToolResult {
   isError?: boolean;
 }
 
+// Tools that should NOT have company/resource names resolved via the mapping
+// service. These are identity or high-frequency tools where name resolution
+// adds unnecessary API calls without providing value to the caller.
+const SKIP_ENHANCEMENT_TOOLS = new Set([
+  'autotask_search_contacts',
+]);
+
 export class AutotaskToolHandler {
   protected autotaskService: AutotaskService;
   protected logger: Logger;
@@ -364,7 +371,7 @@ export class AutotaskToolHandler {
         return { result: r, message: `Found ${r.length} expense reports` };
       }],
       ['autotask_create_expense_report', async (a) => {
-        const id = await s.createExpenseReport({ name: a.name, description: a.description, submitterID: a.submitterId, weekEndingDate: a.weekEndingDate });
+        const id = await s.createExpenseReport({ name: a.name, description: a.description, submitterID: a.submitterID, weekEndingDate: a.weekEndingDate });
         return { result: id, message: `Successfully created expense report with ID: ${id}` };
       }],
 
@@ -475,6 +482,10 @@ export class AutotaskToolHandler {
 
       const { result, message } = await handler(args);
 
+      // Skip name resolution for tools where it would cause unnecessary API calls
+      // without providing value. Contact searches return IDs that Ivy uses directly.
+      const skipEnhancement = SKIP_ENHANCEMENT_TOOLS.has(name);
+
       // Format and enhance response
       let responseText: string;
       if (COMPACT_SEARCH_TOOLS.has(name) && Array.isArray(result)) {
@@ -484,17 +495,19 @@ export class AutotaskToolHandler {
             page: args.page,
             pageSize: args.pageSize,
           });
-          compact.items = await this.enhanceItems(compact.items);
+          if (!skipEnhancement) {
+            compact.items = await this.enhanceItems(compact.items);
+          }
           responseText = JSON.stringify(compact);
         } else {
-          const enhanced = await this.enhanceItems(result);
-          responseText = JSON.stringify({ message, data: enhanced });
+          const items = skipEnhancement ? result : await this.enhanceItems(result);
+          responseText = JSON.stringify({ message, data: items });
         }
       } else if (Array.isArray(result)) {
-        const enhanced = await this.enhanceItems(result);
-        responseText = JSON.stringify({ message, data: enhanced });
+        const items = skipEnhancement ? result : await this.enhanceItems(result);
+        responseText = JSON.stringify({ message, data: items });
       } else if (result && typeof result === 'object' && !Array.isArray(result)) {
-        const enhanced = await this.enhanceItems([result]);
+        const enhanced = skipEnhancement ? [result] : await this.enhanceItems([result]);
         responseText = JSON.stringify({ message, data: enhanced[0] || result });
       } else {
         responseText = JSON.stringify({ message, data: result });
@@ -511,4 +524,4 @@ export class AutotaskToolHandler {
       };
     }
   }
-} 
+}
