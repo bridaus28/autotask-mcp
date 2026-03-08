@@ -350,19 +350,6 @@ export class AutotaskService {
     }
   }
 
-// PATCH: autotask.service.ts - searchTickets method
-// Replace the entire searchTickets method with this version.
-//
-// Changes from previous version:
-//   1. Removed hardcoded `else` fallback that pushed op:'ne', status:5
-//      The tool handler owns default status exclusion. The service layer
-//      applies only what it is explicitly told to apply.
-//   2. Added contactID filter - enables ticket lookup by caller identity.
-//   3. Added excludeStatuses filter using notIn - enables open-ticket queries
-//      without hardcoded IDs.
-//
-// No other methods or files are affected by this patch.
-
   async searchTickets(options: AutotaskQueryOptionsExtended = {}): Promise<AutotaskTicket[]> {
     const client = await this.ensureClient();
 
@@ -392,14 +379,6 @@ export class AutotaskService {
           op: 'eq',
           field: 'status',
           value: options.status
-        });
-      }
-
-      if (options.excludeStatuses && options.excludeStatuses.length > 0) {
-        filters.push({
-          op: 'notIn',
-          field: 'status',
-          value: options.excludeStatuses
         });
       }
 
