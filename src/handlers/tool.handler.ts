@@ -252,19 +252,18 @@ export class AutotaskToolHandler {
       // Tickets
       ['autotask_search_tickets', async (a) => {
         // Elicitation for zero-filter ticket searches
-        const hasFilters = a.searchTerm || a.contactID || a.companyID || a.status !== undefined ||
-          a.excludeStatuses || a.assignedResourceID || a.unassigned ||
-          a.createdAfter || a.createdBefore || a.lastActivityAfter;
+      const hasFilters = a.searchTerm || a.contactID || a.companyID || a.status !== undefined ||
+        a.assignedResourceID || a.unassigned ||
+        a.createdAfter || a.createdBefore || a.lastActivityAfter;
         if (!hasFilters && this.mcpServer) {
           const dateChoice = await this.elicitDateRange();
           if (dateChoice) a = { ...a, ...dateChoice };
         }
-        const { companyID, contactID, excludeStatuses, ...rest } = a;
+        const { companyID, contactID, ...rest } = a;
         const opts = {
           ...rest,
           ...(companyID !== undefined && { companyId: companyID }),
           ...(contactID !== undefined && { contactID }),
-          ...(excludeStatuses !== undefined && { excludeStatuses }),
         };
         const r = await s.searchTickets(opts);
         return { result: r, message: `Found ${r.length} tickets` };
