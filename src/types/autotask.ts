@@ -353,15 +353,6 @@ export interface AutotaskQueryOptions {
   isActive?: boolean | number;
 }
 
-// PATCH: src/types/autotask.ts - AutotaskQueryOptionsExtended interface
-// Replace the AutotaskQueryOptionsExtended interface with this version.
-//
-// Changes from previous version:
-//   1. Added contactID (uppercase D) - used by searchTickets to filter by caller identity.
-//      Note: contactId (lowercase d) already exists for quotes. Both are kept.
-//   2. Added excludeStatuses - integer array passed to notIn filter for open-ticket queries.
-//
-// No other interfaces or types are affected by this patch.
 
 export interface AutotaskQueryOptionsExtended extends AutotaskQueryOptions {
   includeFields?: string[];
@@ -374,7 +365,6 @@ export interface AutotaskQueryOptionsExtended extends AutotaskQueryOptions {
   opportunityId?: number;
   searchTerm?: string;
   status?: number;
-  excludeStatuses?: number[];
   assignedResourceID?: number;
   unassigned?: boolean;
   // Date filters for ticket searches
