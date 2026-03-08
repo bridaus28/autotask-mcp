@@ -210,7 +210,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Ticket tools
   {
     name: 'autotask_search_tickets',
-    description: 'Search for tickets in Autotask. Returns 25 results per page by default. Use page parameter for more results. Use get_ticket_details for full data on a specific ticket. No default status filter is applied - all tickets are returned unless you filter explicitly. Use autotask_list_ticket_statuses to find status IDs, then pass excludeStatuses to filter out closed tickets.',
+    description: 'Search for tickets in Autotask. Returns 25 results per page by default. Use page parameter for more results. Use get_ticket_details for full data on a specific ticket. No default status filter is applied - all tickets are returned unless you filter explicitly.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -229,11 +229,6 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         status: {
           type: 'number',
           description: 'Filter by a single ticket status ID. Use autotask_list_ticket_statuses to find valid IDs. Omit to return tickets of all statuses.'
-        },
-        excludeStatuses: {
-          type: 'array',
-          items: { type: 'number' },
-          description: 'Exclude tickets with these status IDs. Use autotask_list_ticket_statuses to find valid IDs. Useful for excluding Complete and RMM Complete when looking for open tickets.'
         },
         assignedResourceID: {
           type: 'number',
