@@ -243,7 +243,12 @@ export class AutotaskToolHandler {
 
       // Contacts
       ['autotask_search_contacts', async (a) => {
-        const r = await s.searchContacts(a); return { result: r, message: `Found ${r.length} contacts` };
+        if (a.id != null) {
+          const r = await s.getContact(a.id);
+          return { result: { contact: r }, message: 'Contact retrieved successfully' };
+        }
+        const r = await s.searchContacts(a);
+        return { result: r, message: `Found ${r.length} contacts` };
       }],
       ['autotask_create_contact', async (a) => {
         const id = await s.createContact(a); return { result: id, message: `Successfully created contact with ID: ${id}` };
