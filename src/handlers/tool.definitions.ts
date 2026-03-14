@@ -22,6 +22,10 @@ export const TOOL_DEFINITIONS: McpTool[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        id: {
+          type: 'number',
+          description: 'Fetch a single company by ID. When provided, all other parameters are ignored and exactly one company record is returned.'
+        },
         searchTerm: {
           type: 'string',
           description: 'Search term for company name'
