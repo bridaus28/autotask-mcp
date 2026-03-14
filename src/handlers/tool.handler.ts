@@ -232,6 +232,10 @@ export class AutotaskToolHandler {
 
       // Companies
       ['autotask_search_companies', async (a) => {
+        if (a.id != null) {
+          const r = await s.getCompany(a.id);
+          return { result: { company: r }, message: 'Company retrieved successfully' };
+        }
         const r = await s.searchCompanies(a); return { result: r, message: `Found ${r.length} companies` };
       }],
       ['autotask_create_company', async (a) => {
