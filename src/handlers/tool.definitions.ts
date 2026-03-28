@@ -141,14 +141,10 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Contact tools
   {
     name: 'autotask_search_contacts',
-    description: 'Search for contacts in Autotask. Three independent search modes — use only one per call. (1) id: fetches exactly one contact by Autotask integer ID, all other parameters ignored. (2) phone: provide a complete phone number; the server extracts the last 4 digits, queries all three phone fields (phone, mobilePhone, alternatePhone) for candidates, then exact-matches the full number locally — pass only a real phone number, not names or other text. (3) searchTerm: performs a contains match across firstName, lastName, and emailAddress simultaneously — use for name or email lookups when no phone number is available. Returns 25 results per page by default.',
+    description: 'Search for contacts in Autotask by phone number or name. Two independent search modes - use only one per call. (1) phone: provide a complete phone number; the server extracts the last 4 digits, queries all three phone fields (phone, mobilePhone, alternatePhone) for candidates, then exact-matches the full number locally - pass only a real phone number, not names or other text. (2) searchTerm: performs a contains match across firstName, lastName, and emailAddress simultaneously - use for name or email lookups when no phone number is available. To fetch a single contact by ID, use autotask_get_contact instead. Returns 25 results per page by default.',
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
-          type: 'number',
-          description: 'Fetch a single contact by Autotask integer ID. When provided, all other parameters are ignored and exactly one contact record is returned.'
-        },
         searchTerm: {
           type: 'string',
           description: 'Partial or full name or email to search for. Performs a contains match across firstName, lastName, and emailAddress. Do not use this for phone number lookups — use the phone parameter instead.'
@@ -178,6 +174,20 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         }
       },
       required: []
+    }
+  },
+  {
+    name: 'autotask_get_contact',
+    description: 'Fetch a single contact by their Autotask integer ID. Use this for the identity lock step - after narrowing candidates from autotask_search_contacts to one confirmed match. Returns the full contact record at data.contact including id, firstName, lastName, emailAddress, companyID, and primaryContact. The id field in the response is the authoritative contactId for the rest of the call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        contactId: {
+          type: 'number',
+          description: 'The Autotask integer ID of the contact to retrieve. Required. Copy this exactly from the id field of the search result that produced your candidate - never reconstruct or shorten it.'
+        }
+      },
+      required: ['contactId']
     }
   },
   {
