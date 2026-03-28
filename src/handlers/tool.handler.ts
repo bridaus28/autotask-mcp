@@ -32,6 +32,7 @@ export interface McpToolResult {
 // adds unnecessary API calls without providing value to the caller.
 const SKIP_ENHANCEMENT_TOOLS = new Set([
   'autotask_search_contacts',
+  'autotask_get_contact',
 ]);
 
 export class AutotaskToolHandler {
@@ -247,12 +248,12 @@ export class AutotaskToolHandler {
 
       // Contacts
       ['autotask_search_contacts', async (a) => {
-        if (a.id != null) {
-          const r = await s.getContact(a.id);
-          return { result: { contact: r }, message: 'Contact retrieved successfully' };
-        }
         const r = await s.searchContacts(a);
         return { result: r, message: `Found ${r.length} contacts` };
+      }],
+      ['autotask_get_contact', async (a) => {
+        const r = await s.getContact(a.contactId);
+        return { result: { contact: r }, message: 'Contact retrieved successfully' };
       }],
       ['autotask_create_contact', async (a) => {
         const id = await s.createContact(a); return { result: id, message: `Successfully created contact with ID: ${id}` };
@@ -491,7 +492,7 @@ export class AutotaskToolHandler {
       const { result, message } = await handler(args);
 
       // Skip name resolution for tools where it would cause unnecessary API calls
-      // without providing value. Contact searches return IDs that Ivy uses directly.
+      // without providing value. Contact tools return IDs that Ivy uses directly.
       const skipEnhancement = SKIP_ENHANCEMENT_TOOLS.has(name);
 
       // Format and enhance response
