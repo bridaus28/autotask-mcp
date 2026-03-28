@@ -6,9 +6,6 @@ ARG VERSION="unknown"
 ARG COMMIT_SHA="unknown"
 ARG BUILD_DATE="unknown"
 
-# Update npm to latest for security fixes (CVE-2026-24842, CVE-2026-0775, etc.)
-RUN npm install -g npm@latest
-
 # Set working directory
 WORKDIR /app
 
@@ -26,9 +23,6 @@ RUN npm run build
 
 # Production stage
 FROM node:22-alpine AS production
-
-# Update npm to latest for security fixes (CVE-2026-24842, CVE-2026-0775, etc.)
-RUN npm install -g npm@latest
 
 # Create a non-root user for security
 RUN addgroup -g 1001 -S autotask && \
@@ -76,7 +70,7 @@ CMD ["node", "dist/index.js"]
 
 # Build arguments for runtime
 ARG VERSION="unknown"
-ARG COMMIT_SHA="unknown" 
+ARG COMMIT_SHA="unknown"
 ARG BUILD_DATE="unknown"
 
 # Labels for metadata
@@ -92,4 +86,4 @@ LABEL org.opencontainers.image.source="https://github.com/wyre-technology/autota
 LABEL org.opencontainers.image.documentation="https://github.com/wyre-technology/autotask-mcp/blob/main/README.md"
 LABEL org.opencontainers.image.url="https://github.com/wyre-technology/autotask-mcp/pkgs/container/autotask-mcp"
 LABEL org.opencontainers.image.vendor="Wyre Technology"
-LABEL org.opencontainers.image.licenses="Apache-2.0" 
+LABEL org.opencontainers.image.licenses="Apache-2.0"
