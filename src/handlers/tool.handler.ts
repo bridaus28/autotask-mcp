@@ -25,6 +25,7 @@ export interface McpToolResult {
     text: string;
   }>;
   isError?: boolean;
+  data?: any;
 }
 
 // Tools that should NOT have company/resource names resolved via the mapping
@@ -497,6 +498,7 @@ export class AutotaskToolHandler {
 
       // Format and enhance response
       let responseText: string;
+    let topLevelData: any;
       if (COMPACT_SEARCH_TOOLS.has(name) && Array.isArray(result)) {
         const entityType = detectEntityType(name);
         if (entityType) {
@@ -517,13 +519,14 @@ export class AutotaskToolHandler {
         responseText = JSON.stringify({ message, data: items });
       } else if (result && typeof result === 'object' && !Array.isArray(result)) {
         const enhanced = skipEnhancement ? [result] : await this.enhanceItems([result]);
-        responseText = JSON.stringify({ message, data: enhanced[0] || result });
+        topLevelData = enhanced[0] || result;
+      responseText = JSON.stringify({ message, data: topLevelData });
       } else {
         responseText = JSON.stringify({ message, data: result });
       }
 
       this.logger.debug(`Successfully executed tool: ${name}`);
-      return { content: [{ type: 'text', text: responseText }] };
+      return { content: [{ type: 'text', text: responseText }], ...(topLevelData !== undefined ? { data: topLevelData } : {}) };
 
     } catch (error) {
       this.logger.error(`Tool execution failed for ${name}:`, error);
