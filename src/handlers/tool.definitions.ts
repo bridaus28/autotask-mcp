@@ -51,7 +51,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_company',
-    description: 'Create a new company (account) in Autotask. companyName and companyType are required. companyType is a picklist integer — use autotask_get_field_info with entityType "Accounts" to find valid values. ownerResourceID should reference an active resource.',
+    description: 'Create a new company (account) in Autotask. companyName and companyType are required. companyType is a picklist integer — use autotask_get_field_info with entityType "Companies" to find valid values. ownerResourceID should reference an active resource.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -141,10 +141,14 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Contact tools
   {
     name: 'autotask_search_contacts',
-    description: 'Search for contacts in Autotask by phone number or name. Two independent search modes - use only one per call. (1) phone: provide a complete phone number; the server extracts the last 4 digits, queries all three phone fields (phone, mobilePhone, alternatePhone) for candidates, then exact-matches the full number locally - pass only a real phone number, not names or other text. (2) searchTerm: performs a contains match across firstName, lastName, and emailAddress simultaneously - use for name or email lookups when no phone number is available. To fetch a single contact by ID, use autotask_get_contact instead. Returns 25 results per page by default.',
+    description: 'Search for contacts in Autotask. Three independent search modes — use only one per call. (1) id: fetches exactly one contact by Autotask integer ID, all other parameters ignored. (2) phone: provide a complete phone number; the server extracts the last 4 digits, queries all three phone fields (phone, mobilePhone, alternatePhone) for candidates, then exact-matches the full number locally — pass only a real phone number, not names or other text. (3) searchTerm: performs a contains match across firstName, lastName, and emailAddress simultaneously — use for name or email lookups when no phone number is available. Returns 25 results per page by default.',
     inputSchema: {
       type: 'object',
       properties: {
+        id: {
+          type: 'number',
+          description: 'Fetch a single contact by Autotask integer ID. When provided, all other parameters are ignored and exactly one contact record is returned.'
+        },
         searchTerm: {
           type: 'string',
           description: 'Partial or full name or email to search for. Performs a contains match across firstName, lastName, and emailAddress. Do not use this for phone number lookups — use the phone parameter instead.'
@@ -174,20 +178,6 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         }
       },
       required: []
-    }
-  },
-  {
-    name: 'autotask_get_contact',
-    description: 'Fetch a single contact by their Autotask integer ID. Use this for the identity lock step - after narrowing candidates from autotask_search_contacts to one confirmed match. Returns the full contact record at data.contact including id, firstName, lastName, emailAddress, companyID, and primaryContact. The id field in the response is the authoritative contactId for the rest of the call.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        contactId: {
-          type: 'number',
-          description: 'The Autotask integer ID of the contact to retrieve. Required. Copy this exactly from the id field of the search result that produced your candidate - never reconstruct or shorten it.'
-        }
-      },
-      required: ['contactId']
     }
   },
   {
@@ -1181,13 +1171,13 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_get_field_info',
-    description: 'Get field definitions for an Autotask entity type, including all picklist values with their integer IDs and labels. Use this to discover valid values for any picklist field before creating or updating records. entityType must match the Autotask REST API entity name exactly (e.g. "Tickets", "Accounts", "Contacts", "Projects"). Optionally filter to a specific field by name.',
+    description: 'Get field definitions for an Autotask entity type, including all picklist values with their integer IDs and labels. Use this to discover valid values for any picklist field before creating or updating records. entityType must match the Autotask REST API entity name exactly (e.g. "Tickets", "Companies", "Contacts", "Projects"). Optionally filter to a specific field by name.',
     inputSchema: {
       type: 'object',
       properties: {
         entityType: {
           type: 'string',
-          description: 'The Autotask REST API entity type name (e.g. "Tickets", "Accounts", "Contacts", "Projects", "Resources"). Must match the API entity name exactly — note that companies use "Accounts" not "Companies".'
+          description: 'The Autotask REST API entity type name (e.g. "Tickets", "Companies", "Contacts", "Projects", "Resources"). Must match the API entity name exactly. The Companies entity is always "Companies" in the REST API regardless of how it appears in the Autotask UI.'
         },
         fieldName: {
           type: 'string',
