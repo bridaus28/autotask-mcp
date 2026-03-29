@@ -550,7 +550,7 @@ export class AutotaskService {
     
     try {
       this.logger.debug(`Updating ticket ${id}:`, updates);
-      await client.tickets.patch(id, updates as any);
+      await (client as any).axios.patch('/Tickets', { id, ...updates });
       this.logger.info(`Ticket ${id} updated successfully`);
     } catch (error) {
       this.logger.error(`Failed to update ticket ${id}:`, error);
