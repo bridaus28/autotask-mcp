@@ -337,9 +337,186 @@ export class AutotaskMcpServer {
         return;
       }
 
+      // Business status endpoint — replaces hardcoded JS in Twilio function.
+      // Queries Autotask InternalLocationWithBusinessHours + Holidays in real time.
+      // Returns { business_status, holiday_name } for use as ElevenLabs dynamic variables.
+      if (url.pathname === '/business-status') {
+        if (req.method !== 'POST' && req.method !== 'GET') {
+          res.writeHead(405, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+
+        if (isGatewayMode) {
+          const credentials = this.extractGatewayCredentials(req);
+          if (!credentials.username || !credentials.secret || !credentials.integrationCode) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing credentials' }));
+            return;
+          }
+          this.updateCredentials(credentials);
+        }
+
+        const respond = async () => {
+          try {
+            // Current time in Pacific Time (DST-aware)
+            const nowPT = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+            const year   = nowPT.getFullYear();
+            const month  = nowPT.getMonth() + 1; // 1-12
+            const day    = nowPT.getDate();
+            const hour   = nowPT.getHours();
+            const minute = nowPT.getMinutes();
+            const dow    = nowPT.getDay(); // 0=Sun
+
+            const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+            const todayKey = dayNames[dow];
+
+            // 1. Fetch primary internal location with business hours
+            const client = await (this.autotaskService as any).ensureClient();
+            const locResult = await client.internalLocationWithBusinessHours.list({});
+            const locations = (locResult.data as any[]) || [];
+            if (locations.length === 0) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'No internal location configured in Autotask' }));
+              return;
+            }
+
+            // Use primary location (isDefault or first)
+            const loc = locations.find((l: any) => l.isDefault) || locations[0];
+            const holidaySetID = loc.holidaySetID ?? null;
+            const noHoursOnHolidays = loc.noHoursOnHolidays ?? true;
+
+            // 2. Check holidays if a holiday set is configured
+            let businessStatus = 'open';
+            let holidayName = '';
+
+            if (holidaySetID && noHoursOnHolidays) {
+              // Query holidays for today's date
+              const todayStart = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T00:00:00Z`;
+              const todayEnd   = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T23:59:59Z`;
+              const holResult = await client.holidays.list({
+                filter: {
+                  holidaySetID: { eq: holidaySetID },
+                  holidayDate:  { gte: todayStart, lte: todayEnd },
+                }
+              });
+              const holidays = (holResult.data as any[]) || [];
+              if (holidays.length > 0) {
+                businessStatus = 'closed_holiday';
+                holidayName = holidays[0].holidayName || '';
+              }
+            }
+
+            // 3. Weekend check
+            if (businessStatus === 'open' && (dow === 0 || dow === 6)) {
+              businessStatus = 'closed_weekend';
+            }
+
+            // 4. Business hours check (weekday only)
+            if (businessStatus === 'open') {
+              const startField = `${todayKey}BusinessHoursStartTime`;
+              const endField   = `${todayKey}BusinessHoursEndTime`;
+              const startRaw: string = loc[startField] || '';
+              const endRaw: string   = loc[endField]   || '';
+
+              // Times come back as datetime strings: "2000-01-01T08:00:00.000Z"
+              // Extract HH:MM, treating them as local (Autotask stores times in tenant TZ)
+              const parseTime = (raw: string): { h: number; m: number } | null => {
+                const m = raw.match(/T(\d{2}):(\d{2})/);
+                return m ? { h: parseInt(m[1], 10), m: parseInt(m[2], 10) } : null;
+              };
+
+              const start = parseTime(startRaw);
+              const end   = parseTime(endRaw);
+
+              if (!start || !end || (start.h === 0 && start.m === 0 && end.h === 0 && end.m === 0)) {
+                // No hours configured for today — treat as closed
+                businessStatus = 'closed_after_hours';
+              } else {
+                const nowMins   = hour * 60 + minute;
+                const startMins = start.h * 60 + start.m;
+                const endMins   = end.h * 60 + end.m;
+                if (nowMins < startMins || nowMins >= endMins) {
+                  businessStatus = 'closed_after_hours';
+                }
+              }
+            }
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ business_status: businessStatus, holiday_name: holidayName }));
+          } catch (err) {
+            this.logger.error('Business status error:', err);
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Internal error' }));
+            }
+          }
+        };
+
+        // Handle both GET and POST (no body needed for either)
+        req.on('data', () => {});
+        req.on('end', () => { respond(); });
+        return;
+      }
+
+      // Phone lookup endpoint — wraps autotask_search_contacts for Twilio call-init.
+      // Returns contact candidates so Twilio can inject them as a dynamic variable
+      // before ElevenLabs starts the conversation.
+      if (url.pathname === '/phone-lookup') {
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+
+        if (isGatewayMode) {
+          const credentials = this.extractGatewayCredentials(req);
+          if (!credentials.username || !credentials.secret || !credentials.integrationCode) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing credentials' }));
+            return;
+          }
+          this.updateCredentials(credentials);
+        }
+
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const phone = String(parsed.phone || '').trim();
+            if (!phone) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'phone required' }));
+              return;
+            }
+
+            const contacts = await this.autotaskService.searchContacts({ phone });
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              count: contacts.length,
+              contacts: contacts.map((c: any) => ({
+                id:        c.id,
+                firstName: c.firstName ?? null,
+                lastName:  c.lastName  ?? null,
+                companyID: c.companyID ?? null,
+                phone:     c.phone     ?? null,
+              })),
+            }));
+          } catch (err) {
+            this.logger.error('Phone lookup error:', err);
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Internal error' }));
+            }
+          }
+        });
+        return;
+      }
+
       // 404 for everything else
       res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health', '/contact-lock'] }));
+      res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health', '/contact-lock', '/business-status', '/phone-lookup'] }));
     });
 
     await new Promise<void>((resolve) => {
