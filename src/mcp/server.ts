@@ -279,9 +279,67 @@ export class AutotaskMcpServer {
         return;
       }
 
+      // Contact lock endpoint — flat JSON so ElevenLabs value_path resolves confirmed_* variables.
+      // MCP tool responses cannot carry extra fields past the SDK's Zod schema; this endpoint
+      // returns raw HTTP JSON that ElevenLabs webhook/server tools resolve directly.
+      if (url.pathname === '/contact-lock') {
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+
+        if (isGatewayMode) {
+          const credentials = this.extractGatewayCredentials(req);
+          if (!credentials.username || !credentials.secret || !credentials.integrationCode) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing credentials' }));
+            return;
+          }
+          this.updateCredentials(credentials);
+        }
+
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const contactId = parseInt(String(parsed.contact_id), 10);
+            if (!contactId || isNaN(contactId)) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'contact_id (integer) required' }));
+              return;
+            }
+
+            const contact = await this.autotaskService.getContact(contactId);
+            if (!contact) {
+              res.writeHead(404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Contact not found' }));
+              return;
+            }
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              contact_id: contact.id ?? contactId,
+              company_id: contact.companyID ?? null,
+              first_name: contact.firstName ?? null,
+              last_name: contact.lastName ?? null,
+              is_primary: contact.primaryContact ?? false,
+            }));
+          } catch (err) {
+            this.logger.error('Contact lock error:', err);
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Internal error' }));
+            }
+          }
+        });
+        return;
+      }
+
       // 404 for everything else
       res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health'] }));
+      res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health', '/contact-lock'] }));
     });
 
     await new Promise<void>((resolve) => {
