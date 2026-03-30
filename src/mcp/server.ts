@@ -146,10 +146,18 @@ export class AutotaskMcpServer {
           request.params.name,
           request.params.arguments || {}
         );
-        return {
+        // Spread object-shaped data at the envelope level so ElevenLabs can
+        // resolve value_path against top-level fields (e.g. contact.id).
+        // ElevenLabs resolves value_path against this outer envelope, not
+        // against the JSON string inside content[0].text.
+        const response: any = {
           content: result.content,
-          isError: result.isError
+          isError: result.isError,
         };
+        if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
+          Object.assign(response, result.data);
+        }
+        return response;
       } catch (error) {
         this.logger.error(`Failed to call tool ${request.params.name}:`, error);
         throw new McpError(
