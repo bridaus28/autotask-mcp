@@ -217,6 +217,18 @@ export class AutotaskMcpServer {
         return;
       }
 
+      // Bearer token auth — required for all endpoints except /health
+      const sharedSecret = process.env.RAILWAY_SHARED_SECRET;
+      if (sharedSecret) {
+        const authHeader = (req.headers['authorization'] || '').toString();
+        const token = authHeader.replace(/^Bearer\s+/i, '');
+        if (token !== sharedSecret) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unauthorized' }));
+          return;
+        }
+      }
+
       // MCP endpoint — stateless: fresh server + transport per request
       if (url.pathname === '/mcp') {
         // Only POST is supported in stateless mode
