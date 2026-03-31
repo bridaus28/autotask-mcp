@@ -405,6 +405,11 @@ export class AutotaskToolHandler {
       }],
 
       // Picklist tools
+      ['autotask_get_business_status', async () => {
+        const r = await s.getBusinessStatus();
+        return { result: r, message: `Business is currently ${r.business_status}${r.holiday_name ? ` (${r.holiday_name})` : ''}` };
+      }],
+
       ['autotask_list_queues', async () => {
         const queues = await this.picklistCache.getQueues();
         return { result: queues.map(q => ({ id: q.value, name: q.label, isActive: q.isActive })), message: `Found ${queues.length} queues` };

@@ -359,91 +359,9 @@ export class AutotaskMcpServer {
 
         const respond = async () => {
           try {
-            // Current time in Pacific Time (DST-aware)
-            const nowPT = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
-            const year   = nowPT.getFullYear();
-            const month  = nowPT.getMonth() + 1; // 1-12
-            const day    = nowPT.getDate();
-            const hour   = nowPT.getHours();
-            const minute = nowPT.getMinutes();
-            const dow    = nowPT.getDay(); // 0=Sun
-
-            const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-            const todayKey = dayNames[dow];
-
-            // 1. Fetch primary internal location with business hours
-            const client = await (this.autotaskService as any).ensureClient();
-            const locResult = await client.internalLocationWithBusinessHours.list({});
-            const locations = (locResult.data as any[]) || [];
-            if (locations.length === 0) {
-              res.writeHead(500, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'No internal location configured in Autotask' }));
-              return;
-            }
-
-            // Use primary location (isDefault or first)
-            const loc = locations.find((l: any) => l.isDefault) || locations[0];
-            const holidaySetID = loc.holidaySetID ?? null;
-            const noHoursOnHolidays = loc.noHoursOnHolidays ?? true;
-
-            // 2. Check holidays if a holiday set is configured
-            let businessStatus = 'open';
-            let holidayName = '';
-
-            if (holidaySetID && noHoursOnHolidays) {
-              // Query holidays for today's date
-              const todayStart = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T00:00:00Z`;
-              const todayEnd   = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T23:59:59Z`;
-              const holResult = await client.holidays.list({
-                filter: {
-                  holidaySetID: { eq: holidaySetID },
-                  holidayDate:  { gte: todayStart, lte: todayEnd },
-                }
-              });
-              const holidays = (holResult.data as any[]) || [];
-              if (holidays.length > 0) {
-                businessStatus = 'closed_holiday';
-                holidayName = holidays[0].holidayName || '';
-              }
-            }
-
-            // 3. Weekend check
-            if (businessStatus === 'open' && (dow === 0 || dow === 6)) {
-              businessStatus = 'closed_weekend';
-            }
-
-            // 4. Business hours check (weekday only)
-            if (businessStatus === 'open') {
-              const startField = `${todayKey}BusinessHoursStartTime`;
-              const endField   = `${todayKey}BusinessHoursEndTime`;
-              const startRaw: string = loc[startField] || '';
-              const endRaw: string   = loc[endField]   || '';
-
-              // Times come back as datetime strings: "2000-01-01T08:00:00.000Z"
-              // Extract HH:MM, treating them as local (Autotask stores times in tenant TZ)
-              const parseTime = (raw: string): { h: number; m: number } | null => {
-                const m = raw.match(/T(\d{2}):(\d{2})/);
-                return m ? { h: parseInt(m[1], 10), m: parseInt(m[2], 10) } : null;
-              };
-
-              const start = parseTime(startRaw);
-              const end   = parseTime(endRaw);
-
-              if (!start || !end || (start.h === 0 && start.m === 0 && end.h === 0 && end.m === 0)) {
-                // No hours configured for today — treat as closed
-                businessStatus = 'closed_after_hours';
-              } else {
-                const nowMins   = hour * 60 + minute;
-                const startMins = start.h * 60 + start.m;
-                const endMins   = end.h * 60 + end.m;
-                if (nowMins < startMins || nowMins >= endMins) {
-                  businessStatus = 'closed_after_hours';
-                }
-              }
-            }
-
+            const result = await this.autotaskService.getBusinessStatus();
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ business_status: businessStatus, holiday_name: holidayName }));
+            res.end(JSON.stringify(result));
           } catch (err) {
             this.logger.error('Business status error:', err);
             if (!res.headersSent) {
