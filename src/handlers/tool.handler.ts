@@ -283,7 +283,15 @@ export class AutotaskToolHandler {
         const r = await s.getTicket(a.ticketID, a.fullDetails); return { result: r, message: 'Ticket details retrieved successfully' };
       }],
       ['autotask_create_ticket', async (a) => {
-        const id = await s.createTicket(a); return { result: id, message: `Successfully created ticket with ID: ${id}` };
+        const id = await s.createTicket(a);
+        // Fetch the created ticket to get the ticket number for the caller
+        let ticketNumber: string | undefined;
+        try {
+          const ticket = await s.getTicket(id);
+          ticketNumber = ticket?.ticketNumber;
+        } catch { /* non-critical */ }
+        const display = ticketNumber ? `${ticketNumber} (ID: ${id})` : `${id}`;
+        return { result: { id, ticketNumber }, message: `Successfully created ticket ${display}` };
       }],
       ['autotask_update_ticket', async (a) => {
         const { ticketId, ...updates } = a;
