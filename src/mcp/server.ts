@@ -3,6 +3,7 @@
 // Supports both local (env-based) and gateway (header-based) credential modes
 
 import { createServer, IncomingMessage, ServerResponse, Server as HttpServer } from 'node:http';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -22,6 +23,7 @@ import { McpServerConfig } from '../types/mcp.js';
 import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } from '../utils/config.js';
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
+import { PicklistCache } from '../services/picklist.cache.js';
 
 export class AutotaskMcpServer {
   private server: Server;
@@ -32,6 +34,8 @@ export class AutotaskMcpServer {
   private logger: Logger;
   private envConfig: EnvironmentConfig | undefined;
   private httpServer?: HttpServer;
+  private picklistCache: PicklistCache;
+  private ticketPicklistIds: { statusNew: number; priorityNormal: number } | null = null;
 
   constructor(config: McpServerConfig, logger: Logger, envConfig?: EnvironmentConfig) {
     this.logger = logger;
@@ -44,6 +48,12 @@ export class AutotaskMcpServer {
     // Initialize handlers
     this.resourceHandler = new AutotaskResourceHandler(this.autotaskService, logger);
     this.toolHandler = new AutotaskToolHandler(this.autotaskService, logger);
+
+    // Picklist cache for resolving ticket status/priority IDs
+    this.picklistCache = new PicklistCache(
+      logger,
+      (entityType) => this.autotaskService.getFieldInfo(entityType)
+    );
 
     // Create default server (used for stdio mode)
     this.server = this.createFreshServer();
@@ -217,9 +227,9 @@ export class AutotaskMcpServer {
         return;
       }
 
-      // Bearer token auth — required for all endpoints except /health
+      // Bearer token auth — required for all endpoints except /health and /call-closure
       const sharedSecret = process.env.RAILWAY_SHARED_SECRET;
-      if (sharedSecret) {
+      if (sharedSecret && url.pathname !== '/call-closure') {
         const authHeader = (req.headers['authorization'] || '').toString();
         const token = authHeader.replace(/^Bearer\s+/i, '');
         if (token !== sharedSecret) {
@@ -444,9 +454,228 @@ export class AutotaskMcpServer {
         return;
       }
 
+      // Call closure webhook — ElevenLabs fires this after every conversation ends.
+      // Creates an Autotask ticket documenting the call. Authenticated via HMAC-SHA256
+      // signature from ElevenLabs, not bearer token.
+      if (url.pathname === '/call-closure') {
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+
+        const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET;
+        if (!webhookSecret) {
+          this.logger.error('ELEVENLABS_WEBHOOK_SECRET not configured');
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Webhook not configured' }));
+          return;
+        }
+
+        let rawBody = '';
+        let bodySize = 0;
+        req.on('data', (chunk) => {
+          bodySize += chunk.length;
+          if (bodySize > 1_000_000) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Payload too large' }));
+            req.destroy();
+            return;
+          }
+          rawBody += chunk;
+        });
+        req.on('end', async () => {
+          try {
+            // Verify HMAC-SHA256 signature
+            const sigHeader = (req.headers['elevenlabs-signature'] || '').toString();
+            if (!sigHeader) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Missing signature' }));
+              return;
+            }
+
+            // ElevenLabs signature format: v0=<hex-hmac-sha256>
+            const expectedSig = 'v0=' + createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+            const sigBuf = Buffer.from(sigHeader);
+            const expectedBuf = Buffer.from(expectedSig);
+            if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
+              this.logger.warn('Call closure webhook: invalid signature', {
+                received: sigHeader.substring(0, 10) + '...',
+                expectedPrefix: expectedSig.substring(0, 10) + '...',
+              });
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid signature' }));
+              return;
+            }
+
+            const payload = JSON.parse(rawBody);
+            const dynVars = payload.conversation_initiation_client_data?.dynamic_variables || {};
+            const analysis = payload.analysis || {};
+            const dataCollection = analysis.data_collection_results || {};
+            const metadata = payload.metadata || {};
+            const phoneCall = metadata.phone_call || {};
+
+            // -- Minimum data rules --
+            const confirmedContactId = dynVars.confirmed_contact_id ? parseInt(String(dynVars.confirmed_contact_id)) : null;
+            const confirmedCompanyId = dynVars.confirmed_company_id ? parseInt(String(dynVars.confirmed_company_id)) : null;
+            const callerIdentified = !!(confirmedContactId && confirmedCompanyId && !isNaN(confirmedContactId) && !isNaN(confirmedCompanyId));
+
+            const rawCallReason = dataCollection.call_reason?.value ?? null;
+            const hasRealCallReason = rawCallReason && rawCallReason.toLowerCase() !== 'none' && rawCallReason.trim() !== '';
+
+            if (!callerIdentified && !hasRealCallReason) {
+              this.logger.info('Call closure: skipped — no identified caller and no call reason', {
+                conversationId: payload.conversation_id,
+              });
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ action: 'skipped', reason: 'No identified caller and no call reason' }));
+              return;
+            }
+
+            // -- Build ticket fields --
+            const callReason = rawCallReason || 'General Inquiry';
+            const callerName = callerIdentified
+              ? [dynVars.confirmed_first_name, dynVars.confirmed_last_name].filter(Boolean).join(' ') || 'Unknown Caller'
+              : 'Unidentified Caller';
+            const callerPhone = phoneCall.external_number || dynVars.caller_phone || 'Unknown';
+            const durationSecs = metadata.call_duration_secs || null;
+            const durationStr = durationSecs != null ? `${Math.ceil(durationSecs / 60)} min (${durationSecs}s)` : 'Unknown';
+            const summary = analysis.transcript_summary || 'No summary available.';
+            const transferredTo = dataCollection.call_routed_to?.value ?? null;
+            const businessStatus = dynVars.business_status || 'Unknown';
+            const termination = metadata.termination_reason || 'unknown';
+            const callOutcome = analysis.call_successful || 'unknown';
+
+            const title = callerIdentified
+              ? `Inbound Call: ${callReason} - ${callerName}`.substring(0, 255)
+              : `Inbound Call: ${callReason} - Unidentified (${callerPhone})`.substring(0, 255);
+
+            const descriptionLines = [
+              '== Ivy Call Closure Report ==',
+              '',
+              `Summary: ${summary}`,
+              '',
+              `Call Reason: ${callReason}`,
+              `Caller: ${callerName}`,
+              `Caller Phone: ${callerPhone}`,
+              `Duration: ${durationStr}`,
+              `Business Status: ${businessStatus}`,
+              transferredTo ? `Transferred To: ${transferredTo}` : null,
+              `Call Outcome: ${callOutcome}`,
+              `Termination: ${termination}`,
+              '',
+              `Conversation ID: ${payload.conversation_id}`,
+            ];
+            const description = descriptionLines.filter(line => line !== null).join('\n');
+
+            // -- Idempotency: check if Ivy already created a ticket mid-call --
+            const existingTicketNumber = dataCollection.support_ticket_number?.value ?? null;
+            if (existingTicketNumber) {
+              try {
+                const tickets = await this.autotaskService.searchTickets({ searchTerm: existingTicketNumber });
+                if (tickets.length > 0) {
+                  const existing = tickets[0];
+                  await this.autotaskService.createTicketNote(existing.id!, {
+                    title: 'Ivy Call Closure Update',
+                    description: description,
+                    noteType: 1, // General
+                    publish: 1,  // Internal Only
+                  });
+                  this.logger.info('Call closure: added note to existing ticket', {
+                    ticketId: existing.id,
+                    ticketNumber: existing.ticketNumber,
+                    conversationId: payload.conversation_id,
+                  });
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    ticket_id: existing.id,
+                    ticket_number: existing.ticketNumber,
+                    action: 'updated',
+                  }));
+                  return;
+                }
+              } catch (noteErr) {
+                this.logger.warn('Call closure: failed to update existing ticket, will create new', {
+                  ticketNumber: existingTicketNumber,
+                  error: noteErr,
+                });
+                // Fall through to create a new ticket
+              }
+            }
+
+            // -- Resolve picklist IDs (cached after first call) --
+            if (!this.ticketPicklistIds) {
+              const statuses = await this.picklistCache.getTicketStatuses();
+              const priorities = await this.picklistCache.getTicketPriorities();
+              const newStatus = statuses.find(s => s.label.toLowerCase() === 'new');
+              const normalPriority = priorities.find(p =>
+                p.label.toLowerCase().includes('normal') || p.label.toLowerCase().includes('medium')
+              );
+              this.ticketPicklistIds = {
+                statusNew: newStatus ? parseInt(newStatus.value) : 1,
+                priorityNormal: normalPriority ? parseInt(normalPriority.value) : 2,
+              };
+              this.logger.info('Call closure: resolved picklist IDs', this.ticketPicklistIds);
+            }
+
+            // -- Create ticket --
+            const ticket: Record<string, any> = {
+              title,
+              description,
+              status: this.ticketPicklistIds.statusNew,
+              priority: this.ticketPicklistIds.priorityNormal,
+            };
+
+            if (callerIdentified) {
+              ticket.companyID = confirmedCompanyId;
+              ticket.contactID = confirmedContactId;
+            } else {
+              const defaultCompanyId = process.env.AUTOTASK_DEFAULT_COMPANY_ID;
+              if (defaultCompanyId) {
+                ticket.companyID = parseInt(defaultCompanyId);
+              }
+            }
+
+            const ticketId = await this.autotaskService.createTicket(ticket);
+
+            // Fetch the created ticket to get the ticket number
+            let ticketNumber: string | null = null;
+            try {
+              const created = await this.autotaskService.getTicket(ticketId);
+              ticketNumber = created?.ticketNumber || null;
+            } catch {
+              // Non-critical — we have the ID
+            }
+
+            this.logger.info('Call closure: ticket created', {
+              ticketId,
+              ticketNumber,
+              conversationId: payload.conversation_id,
+              callerIdentified,
+            });
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              ticket_id: ticketId,
+              ticket_number: ticketNumber,
+              action: 'created',
+            }));
+          } catch (err) {
+            this.logger.error('Call closure error:', err);
+            if (!res.headersSent) {
+              const message = err instanceof SyntaxError ? 'Invalid JSON body' : 'Internal error';
+              const status = err instanceof SyntaxError ? 400 : 500;
+              res.writeHead(status, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: message }));
+            }
+          }
+        });
+        return;
+      }
+
       // 404 for everything else
       res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health', '/contact-lock', '/business-status', '/phone-lookup'] }));
+      res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health', '/contact-lock', '/business-status', '/phone-lookup', '/call-closure'] }));
     });
 
     await new Promise<void>((resolve) => {
