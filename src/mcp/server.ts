@@ -525,7 +525,9 @@ export class AutotaskMcpServer {
               return;
             }
 
-            const payload = JSON.parse(rawBody);
+            const rawPayload = JSON.parse(rawBody);
+            // Webhook wraps conversation data: { type: "post_call_transcription", data: { ... } }
+            const payload = rawPayload.data || rawPayload;
             const dynVars = payload.conversation_initiation_client_data?.dynamic_variables || {};
             const analysis = payload.analysis || {};
             const dataCollection = analysis.data_collection_results || {};
