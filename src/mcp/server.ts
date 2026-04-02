@@ -488,6 +488,17 @@ export class AutotaskMcpServer {
           try {
             // Verify HMAC-SHA256 signature
             const sigHeader = (req.headers['elevenlabs-signature'] || '').toString();
+
+            // DEBUG: log all signature-related details for troubleshooting
+            this.logger.info('Call closure webhook: signature debug', {
+              hasSignatureHeader: !!sigHeader,
+              signatureHeaderFull: sigHeader,
+              allHeaders: Object.keys(req.headers).filter(h => h.toLowerCase().includes('signature') || h.toLowerCase().includes('eleven')),
+              webhookSecretPrefix: webhookSecret.substring(0, 10) + '...',
+              bodyLength: rawBody.length,
+              bodyPrefix: rawBody.substring(0, 100),
+            });
+
             if (!sigHeader) {
               res.writeHead(401, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Missing signature' }));
@@ -496,12 +507,22 @@ export class AutotaskMcpServer {
 
             // ElevenLabs signature format: v0=<hex-hmac-sha256>
             const expectedSig = 'v0=' + createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+
+            // DEBUG: log both signatures fully for comparison
+            this.logger.info('Call closure webhook: signature comparison', {
+              received: sigHeader,
+              expected: expectedSig,
+              match: sigHeader === expectedSig,
+            });
+
             const sigBuf = Buffer.from(sigHeader);
             const expectedBuf = Buffer.from(expectedSig);
             if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
               this.logger.warn('Call closure webhook: invalid signature', {
-                received: sigHeader.substring(0, 10) + '...',
-                expectedPrefix: expectedSig.substring(0, 10) + '...',
+                receivedLength: sigBuf.length,
+                expectedLength: expectedBuf.length,
+                received: sigHeader,
+                expected: expectedSig,
               });
               res.writeHead(401, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Invalid signature' }));
