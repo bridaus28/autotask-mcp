@@ -454,6 +454,42 @@ export class AutotaskMcpServer {
         return;
       }
 
+      // Resolve extension — converts an extension number to a full SIP URI.
+      // Called by Ivy before transferring so the transfer_sip_uri dynamic variable
+      // gets set via the webhook tool's response assignment.
+      if (url.pathname === '/resolve-extension') {
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const ext = String(parsed.extension || '').trim();
+            if (!ext) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'extension required' }));
+              return;
+            }
+
+            const sipUri = `sip:${ext}@cvit.bvoip.net`;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ sip_uri: sipUri, extension: ext }));
+          } catch (err) {
+            this.logger.error('Resolve extension error:', err);
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Internal error' }));
+            }
+          }
+        });
+        return;
+      }
+
       // Call closure webhook — ElevenLabs fires this after every conversation ends.
       // Creates an Autotask ticket documenting the call. Authenticated via HMAC-SHA256
       // signature from ElevenLabs, not bearer token.
@@ -694,7 +730,7 @@ export class AutotaskMcpServer {
 
       // 404 for everything else
       res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health', '/contact-lock', '/business-status', '/phone-lookup', '/call-closure'] }));
+      res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health', '/contact-lock', '/business-status', '/phone-lookup', '/resolve-extension', '/call-closure'] }));
     });
 
     await new Promise<void>((resolve) => {
