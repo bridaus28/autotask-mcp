@@ -487,43 +487,39 @@ export class AutotaskMcpServer {
         req.on('end', async () => {
           try {
             // Verify HMAC-SHA256 signature
+            // ElevenLabs format: "t=<unix_timestamp>,v0=<hex_hmac>"
+            // HMAC is computed over "<timestamp>.<body>" using the webhook secret
             const sigHeader = (req.headers['elevenlabs-signature'] || '').toString();
-
-            // DEBUG: log all signature-related details for troubleshooting
-            this.logger.info('Call closure webhook: signature debug', {
-              hasSignatureHeader: !!sigHeader,
-              signatureHeaderFull: sigHeader,
-              allHeaders: Object.keys(req.headers).filter(h => h.toLowerCase().includes('signature') || h.toLowerCase().includes('eleven')),
-              webhookSecretPrefix: webhookSecret.substring(0, 10) + '...',
-              bodyLength: rawBody.length,
-              bodyPrefix: rawBody.substring(0, 100),
-            });
-
             if (!sigHeader) {
               res.writeHead(401, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Missing signature' }));
               return;
             }
 
-            // ElevenLabs signature format: v0=<hex-hmac-sha256>
-            const expectedSig = 'v0=' + createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+            // Parse t= and v0= components from the signature header
+            const sigParts: Record<string, string> = {};
+            for (const part of sigHeader.split(',')) {
+              const [key, ...rest] = part.split('=');
+              sigParts[key] = rest.join('=');
+            }
+            const timestamp = sigParts['t'];
+            const receivedSig = sigParts['v0'];
 
-            // DEBUG: log both signatures fully for comparison
-            this.logger.info('Call closure webhook: signature comparison', {
-              received: sigHeader,
-              expected: expectedSig,
-              match: sigHeader === expectedSig,
-            });
+            if (!timestamp || !receivedSig) {
+              this.logger.warn('Call closure webhook: malformed signature header', { sigHeader });
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Malformed signature' }));
+              return;
+            }
 
-            const sigBuf = Buffer.from(sigHeader);
+            // Compute expected signature: HMAC-SHA256(secret, "<timestamp>.<body>")
+            const signedPayload = `${timestamp}.${rawBody}`;
+            const expectedSig = createHmac('sha256', webhookSecret).update(signedPayload).digest('hex');
+
+            const sigBuf = Buffer.from(receivedSig);
             const expectedBuf = Buffer.from(expectedSig);
             if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
-              this.logger.warn('Call closure webhook: invalid signature', {
-                receivedLength: sigBuf.length,
-                expectedLength: expectedBuf.length,
-                received: sigHeader,
-                expected: expectedSig,
-              });
+              this.logger.warn('Call closure webhook: invalid signature');
               res.writeHead(401, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Invalid signature' }));
               return;
