@@ -1198,17 +1198,6 @@ export const TOOL_DEFINITIONS: McpTool[] = [
     }
   },
 
-  // Business status
-  {
-    name: 'autotask_get_business_status',
-    description: 'Check whether the business is currently open or closed, based on Autotask InternalLocationWithBusinessHours and the configured holiday set. Returns business_status ("open", "closed_holiday", "closed_weekend", or "closed_after_hours") and holiday_name (set only when closed_holiday). Use this when a caller asks about current business hours or why no one is available. No arguments required.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: []
-    }
-  },
-
   // Billing Items tools
   {
     name: 'autotask_search_billing_items',
