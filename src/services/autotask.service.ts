@@ -463,10 +463,11 @@ export class AutotaskService {
       }
 
       const pageSize = Math.min(options.pageSize || 25, 500);
-      const queryOptions = {
+      const queryOptions: any = {
         filter: filters,
         pageSize,
         ...(options.page && { page: options.page }),
+        ...((options as any).sort && { sort: (options as any).sort }),
       };
 
       const result = await client.tickets.list(queryOptions);
@@ -1481,10 +1482,11 @@ export class AutotaskService {
       }
 
       const pageSize = Math.min(options.pageSize || 25, 500);
-      const queryOptions = {
+      const queryOptions: any = {
         filter: filters,
         pageSize,
         ...(options.page && { page: options.page }),
+        ...((options as any).sort && { sort: (options as any).sort }),
       };
 
       const result = await client.billingItems.list(queryOptions);
@@ -1567,10 +1569,11 @@ export class AutotaskService {
       }
 
       const pageSize = Math.min(options.pageSize || 25, 500);
-      const queryOptions = {
+      const queryOptions: any = {
         filter: filters,
         pageSize,
         ...(options.page && { page: options.page }),
+        ...((options as any).sort && { sort: (options as any).sort }),
       };
 
       const result = await client.billingItemApprovalLevels.list(queryOptions);
@@ -1685,10 +1688,11 @@ export class AutotaskService {
       }
 
       const pageSize = Math.min(options.pageSize || 25, 500);
-      const queryOptions = {
+      const queryOptions: any = {
         filter: filters,
         pageSize,
         ...(options.page && { page: options.page }),
+        ...((options as any).sort && { sort: (options as any).sort }),
       };
 
       const result = await client.timeEntries.list(queryOptions);

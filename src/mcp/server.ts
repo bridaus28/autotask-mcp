@@ -497,18 +497,17 @@ export class AutotaskMcpServer {
             // Filters out tickets with status=5 (Complete) client-side.
             const buildOpenTickets = async (companyID: number) => {
               try {
+                // Server-side sort by lastActivityDate desc — Autotask default is ID asc,
+                // which would return the oldest records first and miss newer activity above pageSize.
                 const tickets = await this.autotaskService.searchTickets({
                   companyId: companyID,
                   pageSize: 25,
+                  sort: [{ field: 'lastActivityDate', direction: 'desc' }],
                 } as any);
 
+                // status=5 (Complete) filtered client-side; server-side sort already handled ordering.
                 const openTickets = tickets
                   .filter(t => t.status !== 5)
-                  .sort((a: any, b: any) => {
-                    const da = a.lastActivityDate ? Date.parse(a.lastActivityDate) : 0;
-                    const db = b.lastActivityDate ? Date.parse(b.lastActivityDate) : 0;
-                    return db - da;
-                  })
                   .slice(0, 5);
 
                 if (openTickets.length === 0) return [];
@@ -544,6 +543,7 @@ export class AutotaskMcpServer {
                   title:         t.title ?? null,
                   statusLabel:   statusMap.get(String(t.status)) ?? null,
                   assigneeName:  t.assignedResourceID ? (assigneeNames.get(t.assignedResourceID) ?? null) : null,
+                  lastActivity:  t.lastActivityDate ?? null,
                 }));
               } catch (e) {
                 this.logger.warn('Open ticket fetch failed', { companyID, err: (e as Error)?.message });
