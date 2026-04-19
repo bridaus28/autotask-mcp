@@ -497,17 +497,20 @@ export class AutotaskMcpServer {
             // Filters out tickets with status=5 (Complete) client-side.
             const buildOpenTickets = async (companyID: number) => {
               try {
-                // Server-side sort by lastActivityDate desc — Autotask default is ID asc,
-                // which would return the oldest records first and miss newer activity above pageSize.
+                // Autotask's /query endpoint ignores sort params, so over-fetch and sort client-side.
+                // pageSize 500 is the API max; covers essentially any real company's ticket volume.
                 const tickets = await this.autotaskService.searchTickets({
                   companyId: companyID,
-                  pageSize: 25,
-                  sort: [{ field: 'lastActivityDate', direction: 'desc' }],
+                  pageSize: 500,
                 } as any);
 
-                // status=5 (Complete) filtered client-side; server-side sort already handled ordering.
                 const openTickets = tickets
                   .filter(t => t.status !== 5)
+                  .sort((a: any, b: any) => {
+                    const da = a.lastActivityDate ? Date.parse(a.lastActivityDate) : 0;
+                    const db = b.lastActivityDate ? Date.parse(b.lastActivityDate) : 0;
+                    return db - da;
+                  })
                   .slice(0, 5);
 
                 if (openTickets.length === 0) return [];
