@@ -470,7 +470,8 @@ export class AutotaskMcpServer {
                 const values = await this.picklistCache.getPicklistValues('Companies', 'classification');
                 const match = values.find(v => String(v.value) === String(classificationId));
                 const label = match?.label ?? null;
-                const isManaged = label !== null && ['Gold', 'Silver', 'Bronze'].includes(label);
+                // Autotask labels include suffix (e.g. "Silver Managed Service"), so match by token.
+                const isManaged = label !== null && /\b(Gold|Silver|Bronze)\b/i.test(label);
                 return { label, isManaged };
               } catch (e) {
                 this.logger.warn('Classification picklist resolution failed', { classificationId, err: (e as Error)?.message });
