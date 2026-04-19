@@ -399,9 +399,18 @@ export class AutotaskMcpServer {
         return;
       }
 
-      // Phone lookup endpoint — wraps autotask_search_contacts for Twilio call-init.
-      // Returns contact candidates so Twilio can inject them as a dynamic variable
-      // before ElevenLabs starts the conversation.
+      // Phone lookup endpoint — enriched caller context for Twilio call-init.
+      // Resolves match_type, then fans out to pull company + open tickets so Ivy
+      // can make her first move with classification (Gold/Silver/Bronze), open
+      // ticket context, and clear signal when the match is ambiguous.
+      //
+      // match_type values:
+      //   exact_contact              — one contact match
+      //   multi_contact_one_company  — multiple contacts, same company
+      //   ambiguous_multi_company    — multiple contacts spanning companies (NO ticket fetch)
+      //   company_main_phone         — no contact, but a company's main phone matches
+      //   no_match                   — nothing found anywhere
+      //   unknown_caller_id          — blank/private caller_id
       if (url.pathname === '/phone-lookup') {
         if (req.method !== 'POST') {
           res.writeHead(405, { 'Content-Type': 'application/json' });
@@ -425,23 +434,217 @@ export class AutotaskMcpServer {
           try {
             const parsed = JSON.parse(body || '{}');
             const phone = String(parsed.phone || '').trim();
+
+            // Case 6: unknown / private caller_id
             if (!phone) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'phone required' }));
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                match_type: 'unknown_caller_id',
+                count: 0,
+                contacts: [],
+                company: null,
+                openTickets: [],
+                ambiguousCandidates: null,
+              }));
               return;
             }
 
+            // ── 1. Always start with contact search ──────────────────────────
             const contacts = await this.autotaskService.searchContacts({ phone });
+
+            const contactOut = (c: any) => ({
+              id:        c.id,
+              firstName: c.firstName ?? null,
+              lastName:  c.lastName  ?? null,
+              companyID: c.companyID ?? null,
+              phone:     c.phone     ?? null,
+            });
+
+            // Resolve classification label for a single Company object.
+            // Returns { label: string|null, isManaged: bool } given raw classification integer.
+            const resolveClassification = async (classificationId: number | null | undefined) => {
+              if (classificationId === null || classificationId === undefined) {
+                return { label: null as string | null, isManaged: false };
+              }
+              try {
+                const values = await this.picklistCache.getPicklistValues('Companies', 'classification');
+                const match = values.find(v => String(v.value) === String(classificationId));
+                const label = match?.label ?? null;
+                const isManaged = label !== null && ['Gold', 'Silver', 'Bronze'].includes(label);
+                return { label, isManaged };
+              } catch (e) {
+                this.logger.warn('Classification picklist resolution failed', { classificationId, err: (e as Error)?.message });
+                return { label: null as string | null, isManaged: false };
+              }
+            };
+
+            // Build enriched company block for a given companyID.
+            const buildCompanyBlock = async (companyID: number) => {
+              const company = await this.autotaskService.getCompany(companyID);
+              if (!company) return null;
+              const cls = await resolveClassification((company as any).classification);
+              return {
+                id: company.id ?? companyID,
+                name: company.companyName ?? null,
+                classification: cls.label,
+                isManaged: cls.isManaged,
+              };
+            };
+
+            // Build open-ticket list for a company. Picklist-resolves status label
+            // and looks up assignee resource name. Top 5 by lastActivityDate desc.
+            // Filters out tickets with status=5 (Complete) client-side.
+            const buildOpenTickets = async (companyID: number) => {
+              try {
+                const tickets = await this.autotaskService.searchTickets({
+                  companyId: companyID,
+                  pageSize: 25,
+                } as any);
+
+                const openTickets = tickets
+                  .filter(t => t.status !== 5)
+                  .sort((a: any, b: any) => {
+                    const da = a.lastActivityDate ? Date.parse(a.lastActivityDate) : 0;
+                    const db = b.lastActivityDate ? Date.parse(b.lastActivityDate) : 0;
+                    return db - da;
+                  })
+                  .slice(0, 5);
+
+                if (openTickets.length === 0) return [];
+
+                // Resolve status labels (one picklist lookup, cached)
+                let statusMap: Map<string, string> = new Map();
+                try {
+                  const statusValues = await this.picklistCache.getTicketStatuses();
+                  statusMap = new Map(statusValues.map(s => [String(s.value), s.label]));
+                } catch (e) {
+                  this.logger.warn('Ticket status picklist resolution failed', { err: (e as Error)?.message });
+                }
+
+                // Resolve assignee names (parallel, dedup)
+                const assigneeIds = Array.from(new Set(
+                  openTickets.map((t: any) => t.assignedResourceID).filter((id: any) => id)
+                ));
+                const assigneeNames: Map<number, string> = new Map();
+                await Promise.all(assigneeIds.map(async (id: number) => {
+                  try {
+                    const r = await this.autotaskService.getResource(id);
+                    if (r) {
+                      const name = `${r.firstName ?? ''} ${r.lastName ?? ''}`.trim();
+                      if (name) assigneeNames.set(id, name);
+                    }
+                  } catch (e) {
+                    this.logger.warn('Resource lookup failed', { id, err: (e as Error)?.message });
+                  }
+                }));
+
+                return openTickets.map((t: any) => ({
+                  number:        t.ticketNumber ?? null,
+                  title:         t.title ?? null,
+                  statusLabel:   statusMap.get(String(t.status)) ?? null,
+                  assigneeName:  t.assignedResourceID ? (assigneeNames.get(t.assignedResourceID) ?? null) : null,
+                }));
+              } catch (e) {
+                this.logger.warn('Open ticket fetch failed', { companyID, err: (e as Error)?.message });
+                return [];
+              }
+            };
+
+            // ── 2. Branch by contact-search result ───────────────────────────
+
+            // Case 5: no contact match → fall through to company main-phone search
+            if (contacts.length === 0) {
+              const companies = await this.autotaskService.searchCompanies({ phone });
+              if (companies.length === 0) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  match_type: 'no_match',
+                  count: 0,
+                  contacts: [],
+                  company: null,
+                  openTickets: [],
+                  ambiguousCandidates: null,
+                }));
+                return;
+              }
+              // Case 4: company main phone match. Take the first (most common case).
+              const primaryCompany = companies[0];
+              const companyID = primaryCompany.id as number;
+              const [companyBlock, openTickets] = await Promise.all([
+                buildCompanyBlock(companyID),
+                buildOpenTickets(companyID),
+              ]);
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                match_type: 'company_main_phone',
+                count: 0,
+                contacts: [],
+                company: companyBlock,
+                openTickets,
+                ambiguousCandidates: null,
+              }));
+              return;
+            }
+
+            const uniqueCompanyIDs = Array.from(new Set(
+              contacts.map(c => c.companyID).filter((id): id is number => typeof id === 'number')
+            ));
+
+            // Case 3: ambiguous multi-company. Do NOT fetch tickets (risk of cross-company leak).
+            // Return safe summary per candidate (name + company name + classification label).
+            if (uniqueCompanyIDs.length > 1) {
+              const companyBlocks = await Promise.all(
+                uniqueCompanyIDs.map(async (cid) => {
+                  try {
+                    const c = await this.autotaskService.getCompany(cid);
+                    if (!c) return null;
+                    const cls = await resolveClassification((c as any).classification);
+                    return { id: cid, name: c.companyName ?? null, classification: cls.label };
+                  } catch {
+                    return { id: cid, name: null, classification: null };
+                  }
+                })
+              );
+              const companyByID = new Map<number, { name: string | null; classification: string | null }>();
+              companyBlocks.forEach(b => { if (b) companyByID.set(b.id, { name: b.name, classification: b.classification }); });
+
+              const ambiguousCandidates = contacts.map((c: any) => {
+                const meta = c.companyID != null ? companyByID.get(c.companyID) : undefined;
+                return {
+                  contactId:      c.id,
+                  name:           [c.firstName, c.lastName].filter(Boolean).join(' ') || null,
+                  companyId:      c.companyID ?? null,
+                  companyName:    meta?.name ?? null,
+                  classification: meta?.classification ?? null,
+                };
+              });
+
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                match_type: 'ambiguous_multi_company',
+                count: contacts.length,
+                contacts: contacts.map(contactOut),
+                company: null,
+                openTickets: [],
+                ambiguousCandidates,
+              }));
+              return;
+            }
+
+            // Cases 1 & 2: single company (whether one contact or several at same company).
+            const companyID = uniqueCompanyIDs[0];
+            const [companyBlock, openTickets] = companyID
+              ? await Promise.all([buildCompanyBlock(companyID), buildOpenTickets(companyID)])
+              : [null, []];
+
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
+              match_type: contacts.length === 1 ? 'exact_contact' : 'multi_contact_one_company',
               count: contacts.length,
-              contacts: contacts.map((c: any) => ({
-                id:        c.id,
-                firstName: c.firstName ?? null,
-                lastName:  c.lastName  ?? null,
-                companyID: c.companyID ?? null,
-                phone:     c.phone     ?? null,
-              })),
+              contacts: contacts.map(contactOut),
+              company: companyBlock,
+              openTickets,
+              ambiguousCandidates: null,
             }));
           } catch (err) {
             this.logger.error('Phone lookup error:', err);

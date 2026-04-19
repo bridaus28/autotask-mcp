@@ -140,6 +140,30 @@ export class AutotaskService {
         });
       }
 
+      // Coarse phone lookup on company main phone (last 4 digits), exact re-match below.
+      // Mirrors searchContacts phone handling; Companies have only `phone` (no mobile/alt).
+      if (options.phone) {
+        const candidateSearch = buildPhoneCandidateSearch(options.phone);
+
+        this.logger.info('Company phone candidate search', {
+          rawPhone: options.phone,
+          last4: candidateSearch.last4
+        });
+
+        if (!candidateSearch.last4) {
+          this.logger.info('Company phone candidate search could not derive last4', {
+            rawPhone: options.phone
+          });
+          return [];
+        }
+
+        filters.push({
+          op: 'contains',
+          field: 'phone',
+          value: candidateSearch.last4
+        });
+      }
+
       if (options.isActive !== undefined) {
         filters.push({
           op: 'eq',
@@ -156,7 +180,18 @@ export class AutotaskService {
       };
 
       const result = await client.accounts.list(queryOptions as any);
-      const companies = (result.data as AutotaskCompany[]) || [];
+      let companies = (result.data as AutotaskCompany[]) || [];
+
+      if (options.phone && companies.length > 0) {
+        companies = companies.filter((company) =>
+          isExactPhoneMatch(options.phone!, company.phone)
+        );
+
+        this.logger.info('Company phone exact match filtering complete', {
+          rawPhone: options.phone,
+          remainingCompanies: companies.length
+        });
+      }
 
       this.logger.info(`Retrieved ${companies.length} companies (page ${options.page || 1}, pageSize ${pageSize})`);
       return companies;
