@@ -816,6 +816,14 @@ export class AutotaskService {
         });
       }
 
+      if ((options as any).isActive !== undefined) {
+        filters.push({ op: 'eq', field: 'isActive', value: (options as any).isActive });
+      }
+
+      if ((options as any).resourceType !== undefined) {
+        filters.push({ op: 'eq', field: 'resourceType', value: (options as any).resourceType });
+      }
+
       const pageSize = Math.min(options.pageSize || 25, 500);
       const queryOptions: any = {
         pageSize,
