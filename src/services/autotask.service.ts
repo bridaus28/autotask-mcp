@@ -1783,11 +1783,12 @@ export class AutotaskService {
 
   /**
    * Get current business status from Autotask InternalLocationWithBusinessHours and Holidays.
-   * Returns business_status: 'open' | 'closed_holiday' | 'closed_weekend' | 'closed_after_hours'
-   * and holiday_name (non-empty only when closed_holiday).
+   * Returns business_status: 'open' | 'closed_holiday' | 'closed_weekend' | 'closed_after_hours',
+   * holiday_name (non-empty only when closed_holiday), and next_open_text — a plain-English
+   * string (e.g. "tomorrow at 8 AM Pacific") when closed; empty when open.
    * All time comparisons use America/Los_Angeles (Pacific, DST-aware).
    */
-  async getBusinessStatus(): Promise<{ business_status: string; holiday_name: string }> {
+  async getBusinessStatus(): Promise<{ business_status: string; holiday_name: string; next_open_text: string }> {
     const client = await this.ensureClient();
 
     // Current time in Pacific Time (DST-aware)
@@ -1866,6 +1867,95 @@ export class AutotaskService {
       }
     }
 
-    return { business_status: businessStatus, holiday_name: holidayName };
+    // 5. Next-open text — when closed, compute the next business-day open time.
+    let nextOpenText = '';
+    if (businessStatus !== 'open') {
+      nextOpenText = await this.computeNextOpenText(loc, holidaySetID, noHoursOnHolidays, nowPT);
+    }
+
+    return { business_status: businessStatus, holiday_name: holidayName, next_open_text: nextOpenText };
   }
-} 
+
+  /**
+   * Walk forward from nowPT up to 14 days to find the next open business day/time,
+   * respecting per-weekday hours and the holiday set. Returns a plain-English string
+   * like "today at 8 AM Pacific", "tomorrow at 8 AM Pacific", "Monday at 8 AM Pacific",
+   * or "the next business day at 8 AM Pacific" for horizons beyond a week.
+   */
+  private async computeNextOpenText(
+    loc: any,
+    holidaySetID: number | null,
+    noHoursOnHolidays: boolean,
+    nowPT: Date,
+  ): Promise<string> {
+    const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+    const pad = (n: number) => String(n).padStart(2, '0');
+
+    // Pre-fetch holidays in the 14-day window (single API call).
+    const holidayDates = new Set<string>();
+    if (holidaySetID && noHoursOnHolidays) {
+      const client = await this.ensureClient();
+      const startD = new Date(nowPT);
+      const endD   = new Date(nowPT);
+      endD.setDate(endD.getDate() + 14);
+      const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00:00Z`;
+      try {
+        const holResult = await client.holidays.list({
+          filter: {
+            holidaySetID: { eq: holidaySetID },
+            holidayDate:  { gte: fmt(startD), lte: fmt(endD) },
+          }
+        });
+        for (const h of (holResult.data as any[]) || []) {
+          if (h.holidayDate) holidayDates.add(String(h.holidayDate).substring(0, 10));
+        }
+      } catch {
+        // If the holiday fetch fails, fall back to no holiday skipping —
+        // the caller still gets a plausible next-open line.
+      }
+    }
+
+    const parseTime = (raw: string): { h: number; m: number } | null => {
+      const m = raw?.match?.(/T(\d{2}):(\d{2})/);
+      return m ? { h: parseInt(m[1], 10), m: parseInt(m[2], 10) } : null;
+    };
+
+    const fmtTime = (h: number, m: number): string => {
+      const hour12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+      const ampm   = h >= 12 ? 'PM' : 'AM';
+      return m === 0 ? `${hour12} ${ampm}` : `${hour12}:${pad(m)} ${ampm}`;
+    };
+
+    for (let i = 0; i <= 14; i++) {
+      const d = new Date(nowPT);
+      d.setDate(d.getDate() + i);
+      const dayKey   = dayNames[d.getDay()];
+      const startRaw = loc[`${dayKey}BusinessHoursStartTime`] || '';
+      const endRaw   = loc[`${dayKey}BusinessHoursEndTime`]   || '';
+      const start    = parseTime(startRaw);
+      const end      = parseTime(endRaw);
+      // Skip non-business days (no hours set or zero span).
+      if (!start || !end) continue;
+      if (start.h === 0 && start.m === 0 && end.h === 0 && end.m === 0) continue;
+      // Skip holidays.
+      const dateKey = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+      if (holidayDates.has(dateKey)) continue;
+      // For today, only count it if we haven't reached the start time yet.
+      if (i === 0) {
+        const nowMins   = nowPT.getHours() * 60 + nowPT.getMinutes();
+        const startMins = start.h * 60 + start.m;
+        if (nowMins >= startMins) continue;
+      }
+
+      const timeStr = fmtTime(start.h, start.m);
+      let dayDesc: string;
+      if (i === 0)      dayDesc = 'today';
+      else if (i === 1) dayDesc = 'tomorrow';
+      else if (i < 7)   dayDesc = dayKey.charAt(0).toUpperCase() + dayKey.slice(1);
+      else              dayDesc = 'the next business day';
+      return `${dayDesc} at ${timeStr} Pacific`;
+    }
+
+    return 'the next business day';
+  }
+}
