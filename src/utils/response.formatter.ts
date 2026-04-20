@@ -27,7 +27,7 @@ const SUMMARY_FIELDS: Record<EntityType, string[]> = {
   contacts: ['id', 'firstName', 'lastName', 'emailAddress', 'companyID'],
   projects: ['id', 'projectName', 'status', 'companyID', 'projectLeadResourceID', 'startDate', 'endDate'],
   tasks: ['id', 'title', 'status', 'projectID', 'assignedResourceID', 'percentComplete'],
-  resources: ['id', 'firstName', 'lastName', 'email', 'isActive'],
+  resources: ['id', 'firstName', 'lastName', 'email', 'isActive', 'title', 'officeExtension'],
   billingItems: ['id', 'itemName', 'companyID', 'ticketID', 'projectID', 'postedDate', 'totalAmount', 'invoiceID', 'billingItemType'],
   billingItemApprovalLevels: ['id', 'timeEntryID', 'approvalLevel', 'approvalResourceID', 'approvalDateTime'],
   timeEntries: ['id', 'resourceID', 'ticketID', 'projectID', 'taskID', 'dateWorked', 'hoursWorked', 'summaryNotes'],
@@ -104,8 +104,9 @@ export function detectEntityType(toolName: string): EntityType | null {
   if (toolName.includes('compan')) return 'companies';
   if (toolName.includes('contact')) return 'contacts';
   if (toolName.includes('project')) return 'projects';
-  if (toolName.includes('task')) return 'tasks';
+  // Check 'resource' before 'task' — "autotask_search_resources" contains both.
   if (toolName.includes('resource')) return 'resources';
+  if (toolName.includes('task')) return 'tasks';
   return null;
 }
 
