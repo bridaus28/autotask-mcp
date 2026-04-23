@@ -227,6 +227,18 @@ export class AutotaskMcpServer {
         return;
       }
 
+      // Version endpoint - reports the git commit Railway is currently serving.
+      // Railway injects RAILWAY_GIT_COMMIT_SHA automatically. No auth required.
+      if (url.pathname === '/version') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          commit: process.env.RAILWAY_GIT_COMMIT_SHA || 'unknown',
+          branch: process.env.RAILWAY_GIT_BRANCH || 'unknown',
+          deployedAt: process.env.RAILWAY_DEPLOYMENT_CREATED_AT || 'unknown'
+        }));
+        return;
+      }
+
       // Bearer token auth — required for all endpoints except /health and /call-closure
       const sharedSecret = process.env.RAILWAY_SHARED_SECRET;
       if (sharedSecret && url.pathname !== '/call-closure') {
