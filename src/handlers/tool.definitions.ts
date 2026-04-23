@@ -596,7 +596,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_ticket_note',
-    description: 'Add a note to an existing ticket. ticketId and description are required. noteType controls the note category (1=General is the standard choice). publish controls visibility: 1=Internal Only, 2=All Autotask Users, 3=Everyone including client portal. Use autotask_list_ticket_statuses if you also need to update the ticket status after adding the note.',
+    description: 'Add a note to an existing ticket. ticketId and description are required. noteType controls the note category (1=General is the standard choice). publish controls visibility — values are instance-specific; on our tenant: 1=All Autotask Users, 2=Internal Only, 3=client portal (unverified). Verify picklist labels in your tenant before relying on these. Use autotask_list_ticket_statuses if you also need to update the ticket status after adding the note.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -618,7 +618,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         publish: {
           type: 'number',
-          description: 'Visibility level. 1=Internal Only, 2=All Autotask Users, 3=Everyone (including client portal). Use 2 for standard internal notes.'
+          description: 'Visibility level (instance-specific picklist). On our tenant: 1=All Autotask Users, 2=Internal Only, 3=client portal (unverified). Use 2 for standard internal notes.'
         }
       },
       required: ['ticketId', 'description']

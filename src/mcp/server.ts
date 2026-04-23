@@ -841,7 +841,7 @@ export class AutotaskMcpServer {
                     title: 'Ivy Call Closure Update',
                     description: description,
                     noteType: 1, // General
-                    publish: 1,  // Internal Only
+                    publish: 2,  // Internal Only (verified against live tenant ticket 53302)
                   });
                   this.logger.info('Call closure: added note to existing ticket', {
                     ticketId: existing.id,
