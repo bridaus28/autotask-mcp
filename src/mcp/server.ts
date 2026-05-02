@@ -465,11 +465,12 @@ export class AutotaskMcpServer {
             const contacts = await this.autotaskService.searchContacts({ phone });
 
             const contactOut = (c: any) => ({
-              id:        c.id,
-              firstName: c.firstName ?? null,
-              lastName:  c.lastName  ?? null,
-              companyID: c.companyID ?? null,
-              phone:     c.phone     ?? null,
+              id:             c.id,
+              firstName:      c.firstName ?? null,
+              lastName:       c.lastName  ?? null,
+              companyID:      c.companyID ?? null,
+              phone:          c.phone     ?? null,
+              primaryContact: c.primaryContact ?? false,
             });
 
             // Resolve classification label for a single Company object.
@@ -632,6 +633,7 @@ export class AutotaskMcpServer {
                   companyId:      c.companyID ?? null,
                   companyName:    meta?.name ?? null,
                   classification: meta?.classification ?? null,
+                  primaryContact: c.primaryContact ?? false,
                 };
               });
 
