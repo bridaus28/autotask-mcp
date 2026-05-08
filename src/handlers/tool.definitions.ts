@@ -554,6 +554,20 @@ export const TOOL_DEFINITIONS: McpTool[] = [
       required: []
     }
   },
+  {
+    name: 'autotask_lookup_tech_status',
+    description: 'Look up a technician by name and return their availability status in one call. Use this when a caller asks for a specific tech by first name. The returned status field tells you what to do next:\n- "available": tech is reachable now — proceed to resolve_transfer_extension with officeExtension and transfer.\n- "not_available": tech is on the team but not reachable right now — take a message or open a ticket. Do not say cause.\n- "no_match": no tech with that name on the team — pivot to the reason for the call and route by need.\n- "ambiguous": multiple matches — ask the caller for the last name to narrow, without naming any candidate.\n- "no_extension": tech is on the team but not phone-routable — take a message or open a ticket.\n- "presence_unavailable": could not check status — take a message or open a ticket.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        searchTerm: {
+          type: 'string',
+          description: 'First name (or distinctive identifier) of the technician the caller asked for.'
+        }
+      },
+      required: ['searchTerm']
+    }
+  },
 
   // Ticket Notes tools
   {

@@ -316,6 +316,74 @@ export class AutotaskToolHandler {
       ['autotask_search_resources', async (a) => {
         const r = await s.searchResources(a); return { result: r, message: `Found ${r.length} resources` };
       }],
+      ['autotask_lookup_tech_status', async (a) => {
+        const searchTerm = a.searchTerm;
+        if (!searchTerm || typeof searchTerm !== 'string' || searchTerm.trim() === '') {
+          return {
+            result: { status: 'no_match', reason: 'empty_searchTerm' },
+            message: 'searchTerm is required'
+          };
+        }
+
+        // Step 1: search Autotask resources (active only)
+        const resources = await s.searchResources({
+          isActive: true,
+          searchTerm: searchTerm.trim(),
+          pageSize: 25,
+        });
+
+        if (resources.length === 0) {
+          return { result: { status: 'no_match' }, message: 'No matching tech found' };
+        }
+        if (resources.length > 1) {
+          return { result: { status: 'ambiguous', count: resources.length }, message: `${resources.length} matches \u2014 need more info` };
+        }
+
+        // Single match
+        const tech = resources[0];
+        const name = `${tech.firstName || ''} ${tech.lastName || ''}`.trim() || 'Unknown';
+        const title = tech.title || null;
+        const ext = tech.officeExtension ? String(tech.officeExtension) : '';
+
+        if (!ext) {
+          return { result: { status: 'no_extension', name, title }, message: 'Tech found but not phone-routable' };
+        }
+
+        // Step 2: presence-service
+        const presenceUrl = process.env.PRESENCE_SERVICE_URL || 'https://presence-service-production-daeb.up.railway.app';
+        const presenceToken = process.env.PRESENCE_SERVICE_TOKEN;
+
+        if (!presenceToken) {
+          return {
+            result: { status: 'presence_unavailable', name, title, officeExtension: ext, reason: 'token_missing' },
+            message: 'Presence token not configured'
+          };
+        }
+
+        try {
+          const r = await fetch(`${presenceUrl}/tech/${encodeURIComponent(ext)}/availability`, {
+            headers: { 'Authorization': `Bearer ${presenceToken}` },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!r.ok) {
+            return {
+              result: { status: 'presence_unavailable', name, title, officeExtension: ext, reason: `presence_http_${r.status}` },
+              message: `Presence check returned ${r.status}`
+            };
+          }
+          const data: any = await r.json();
+          const isAvailable = data.available === true;
+          return {
+            result: { status: isAvailable ? 'available' : 'not_available', name, title, officeExtension: ext, available: isAvailable },
+            message: `Tech ${name} is ${isAvailable ? 'available' : 'not available'}`
+          };
+        } catch (err) {
+          return {
+            result: { status: 'presence_unavailable', name, title, officeExtension: ext, reason: 'presence_network_error' },
+            message: 'Presence service unreachable'
+          };
+        }
+      }],
 
       // Configuration Items
       ['autotask_search_configuration_items', async (a) => {
