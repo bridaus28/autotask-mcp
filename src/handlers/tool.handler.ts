@@ -362,7 +362,7 @@ export class AutotaskToolHandler {
 
         try {
           const r = await fetch(`${presenceUrl}/tech/${encodeURIComponent(ext)}/availability`, {
-            headers: { 'Authorization': `Bearer ${presenceToken}` },
+            headers: { 'Authorization': presenceToken },
             signal: AbortSignal.timeout(8000),
           });
           if (!r.ok) {
