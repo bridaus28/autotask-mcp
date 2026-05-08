@@ -794,12 +794,31 @@ export class AutotaskMcpServer {
             // -- Minimum data rules --
             const confirmedContactId = dynVars.confirmed_contact_id ? parseInt(String(dynVars.confirmed_contact_id)) : null;
             const confirmedCompanyId = dynVars.confirmed_company_id ? parseInt(String(dynVars.confirmed_company_id)) : null;
-            const callerIdentified = !!(confirmedContactId && confirmedCompanyId && !isNaN(confirmedContactId) && !isNaN(confirmedCompanyId));
+
+            // Lenient identity: prefer confirmed (lock fired), fall back to prelocked.
+            // A single contact on a caller-ID is our Autotask data — credit the ticket to them
+            // even if Ivy didn't formally lock during the call.
+            const prelockedContactId = dynVars.prelocked_contact_id ? parseInt(String(dynVars.prelocked_contact_id)) : null;
+            const prelockedCompanyId = dynVars.prelocked_company_id ? parseInt(String(dynVars.prelocked_company_id)) : null;
+            const prelockedCompanyName = dynVars.prelocked_company_name || null;
+            const prelockedFirstName = dynVars.prelocked_first_name || null;
+            const prelockedLastName = dynVars.prelocked_last_name || null;
+
+            const hasPrelockedContact = !!(prelockedContactId && !isNaN(prelockedContactId) && prelockedContactId > 0);
+            const hasPrelockedCompany = !!(prelockedCompanyId && !isNaN(prelockedCompanyId) && prelockedCompanyId > 0);
+
+            const effectiveContactId = (confirmedContactId && !isNaN(confirmedContactId) ? confirmedContactId : null) || (hasPrelockedContact ? prelockedContactId : null);
+            const effectiveCompanyId = (confirmedCompanyId && !isNaN(confirmedCompanyId) ? confirmedCompanyId : null) || (hasPrelockedCompany ? prelockedCompanyId : null);
+            const effectiveFirstName = dynVars.confirmed_first_name || prelockedFirstName || '';
+            const effectiveLastName = dynVars.confirmed_last_name || prelockedLastName || '';
+
+            const fullyIdentified = !!(effectiveContactId && effectiveCompanyId);
+            const companyOnlyIdentified = !fullyIdentified && !!effectiveCompanyId;
 
             const rawCallReason = dataCollection.call_reason?.value ?? null;
             const hasRealCallReason = rawCallReason && rawCallReason.toLowerCase() !== 'none' && rawCallReason.trim() !== '';
 
-            if (!callerIdentified && !hasRealCallReason) {
+            if (!fullyIdentified && !companyOnlyIdentified && !hasRealCallReason) {
               this.logger.info('Call closure: skipped — no identified caller and no call reason', {
                 conversationId: payload.conversation_id,
               });
@@ -810,9 +829,9 @@ export class AutotaskMcpServer {
 
             // -- Build ticket fields --
             const callReason = rawCallReason || 'General Inquiry';
-            const callerName = callerIdentified
-              ? [dynVars.confirmed_first_name, dynVars.confirmed_last_name].filter(Boolean).join(' ') || 'Unknown Caller'
-              : 'Unidentified Caller';
+            const callerName = fullyIdentified
+              ? [effectiveFirstName, effectiveLastName].filter(Boolean).join(' ') || 'Unknown Caller'
+              : null;
             const callerPhone = phoneCall.external_number || dynVars.caller_phone || 'Unknown';
             const durationSecs = metadata.call_duration_secs || null;
             const durationStr = durationSecs != null ? `${Math.ceil(durationSecs / 60)} min (${durationSecs}s)` : 'Unknown';
@@ -822,9 +841,21 @@ export class AutotaskMcpServer {
             const termination = metadata.termination_reason || 'unknown';
             const callOutcome = analysis.call_successful || 'unknown';
 
-            const title = callerIdentified
-              ? `Inbound Call: ${callReason} - ${callerName}`.substring(0, 255)
-              : `Inbound Call: ${callReason} - Unidentified (${callerPhone})`.substring(0, 255);
+            let title: string;
+            if (fullyIdentified) {
+              title = `Inbound Call: ${callReason} - ${callerName}`.substring(0, 255);
+            } else if (companyOnlyIdentified) {
+              const coLabel = prelockedCompanyName || `Company ${effectiveCompanyId}`;
+              title = `[Unverified] Inbound Call: ${callReason} - ${coLabel}`.substring(0, 255);
+            } else {
+              title = `[Unverified] Inbound Call: ${callReason} - Unidentified (${callerPhone})`.substring(0, 255);
+            }
+
+            const callerLine = fullyIdentified
+              ? `Caller: ${callerName}`
+              : companyOnlyIdentified
+                ? `Caller: Unverified contact at ${prelockedCompanyName || `company ${effectiveCompanyId}`}`
+                : `Caller: Unidentified (no record on file for ${callerPhone})`;
 
             const descriptionLines = [
               '== Ivy Call Closure Report ==',
@@ -832,7 +863,7 @@ export class AutotaskMcpServer {
               `Summary: ${summary}`,
               '',
               `Call Reason: ${callReason}`,
-              `Caller: ${callerName}`,
+              callerLine,
               `Caller Phone: ${callerPhone}`,
               `Duration: ${durationStr}`,
               `Business Status: ${businessStatus}`,
@@ -902,9 +933,12 @@ export class AutotaskMcpServer {
               priority: this.ticketPicklistIds.priorityNormal,
             };
 
-            if (callerIdentified) {
-              ticket.companyID = confirmedCompanyId;
-              ticket.contactID = confirmedContactId;
+            if (fullyIdentified) {
+              ticket.companyID = effectiveCompanyId;
+              ticket.contactID = effectiveContactId;
+            } else if (companyOnlyIdentified) {
+              ticket.companyID = effectiveCompanyId;
+              // contactID omitted — UNVERIFIED INTAKE shape per kb_identity_sop
             } else {
               const defaultCompanyId = process.env.AUTOTASK_DEFAULT_COMPANY_ID;
               if (defaultCompanyId) {
@@ -927,7 +961,7 @@ export class AutotaskMcpServer {
               ticketId,
               ticketNumber,
               conversationId: payload.conversation_id,
-              callerIdentified,
+              identityLevel: fullyIdentified ? 'fully' : companyOnlyIdentified ? 'company_only' : 'unidentified',
             });
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
