@@ -304,7 +304,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_ticket',
-    description: 'Create a new ticket in Autotask. companyID, title, and description are required. status and priority are picklist integers — use autotask_list_ticket_statuses and autotask_list_ticket_priorities to find valid IDs for this instance. If assignedResourceID is set, assignedResourceRoleID is also required by Autotask. contactID must belong to the same company as companyID.',
+    description: 'Create a new ticket in Autotask. companyID, title, description, status, and priority are required. status and priority are picklist integers — call autotask_list_ticket_statuses and autotask_list_ticket_priorities first to resolve them (typically "New" for status, "Medium" for priority). If assignedResourceID is set, assignedResourceRoleID is also required by Autotask. contactID must belong to the same company as companyID.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -341,7 +341,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
           description: 'Integer ID of the contact on this ticket. Must belong to the same company as companyID.'
         }
       },
-      required: ['companyID', 'title', 'description']
+      required: ['companyID', 'title', 'description', 'status', 'priority']
     }
   },
   {
