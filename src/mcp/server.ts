@@ -510,11 +510,16 @@ export class AutotaskMcpServer {
             // Filters out tickets with status=5 (Complete) client-side.
             const buildOpenTickets = async (companyID: number) => {
               try {
-                // Autotask's /query endpoint ignores sort params, so over-fetch and sort client-side.
-                // pageSize 500 is the API max; covers essentially any real company's ticket volume.
+                // Autotask's /query endpoint has no server-side sort — records always
+                // come back sorted by internal ID asc. To avoid pulling years of history
+                // (which made /phone-lookup take 7-9s for established customers), use
+                // lastActivityAfter to restrict to the last 90 days, and a small pageSize.
+                // A typical managed customer has fewer than 50 tickets active in 90 days.
+                const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
                 const tickets = await this.autotaskService.searchTickets({
                   companyId: companyID,
-                  pageSize: 500,
+                  pageSize: 50,
+                  lastActivityAfter: ninetyDaysAgo,
                 } as any);
 
                 const openTickets = tickets
