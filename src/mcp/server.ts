@@ -697,9 +697,27 @@ export class AutotaskMcpServer {
               return;
             }
 
+            // Strict 4-digit check. bvoip/1stream routes are exactly 4 digits:
+            // tech officeExtensions (1001/1004/1005…) and queue extensions from
+            // kb_queue_gating Relief Valve (8000/8002/8003/8004). Rejects:
+            //   - string hallucinations: "support", "voicemail", "main"
+            //   - Autotask queue IDs misused as routes (e.g. 29682833) — those
+            //     are ticket-tagging identifiers, not routable in bvoip.
+            if (!/^\d{4}$/.test(ext)) {
+              this.logger.warn(`resolve-extension: rejected non-4-digit input ${JSON.stringify(ext)}`);
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                sip_uri: '',
+                extension: ext,
+                status: 'unknown_extension',
+                message: `Extension '${ext}' is not a routable extension. bvoip extensions are exactly 4 digits. Use a tech officeExtension from autotask_search_resources, or a queue extension from kb_queue_gating's Relief Valve (8000 Sales, 8002 Business Support, 8003 Home Support, 8004 Billing). Autotask queue IDs from autotask_list_queues are NOT routable — they are ticket-tagging identifiers only.`,
+              }));
+              return;
+            }
+
             const sipUri = `sip:${ext}@cvit.bvoip.net`;
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ sip_uri: sipUri, extension: ext }));
+            res.end(JSON.stringify({ sip_uri: sipUri, extension: ext, status: 'ok' }));
           } catch (err) {
             this.logger.error('Resolve extension error:', err);
             if (!res.headersSent) {
