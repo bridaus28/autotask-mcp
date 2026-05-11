@@ -887,6 +887,20 @@ export class AutotaskMcpServer {
             const rawCallReason = dataCollection.call_reason?.value ?? null;
             const hasRealCallReason = rawCallReason && rawCallReason.toLowerCase() !== 'none' && rawCallReason.trim() !== '';
 
+            // Unconditional skip on vendor/sales solicitation, regardless of identification.
+            // Ivy flags these by prefixing call_reason with "Solicitation: " per the
+            // agent's call_reason data_collection extraction rule.
+            const isSolicitation = !!(rawCallReason && rawCallReason.trim().toLowerCase().startsWith('solicitation:'));
+            if (isSolicitation) {
+              this.logger.info('Call closure: skipped — vendor/sales solicitation', {
+                conversationId: payload.conversation_id,
+                callReason: rawCallReason,
+              });
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ action: 'skipped', reason: 'Vendor/sales solicitation' }));
+              return;
+            }
+
             if (!fullyIdentified && !companyOnlyIdentified && !hasRealCallReason) {
               this.logger.info('Call closure: skipped — no identified caller and no call reason', {
                 conversationId: payload.conversation_id,
