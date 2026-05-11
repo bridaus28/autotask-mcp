@@ -825,10 +825,56 @@ export class AutotaskMcpServer {
             const hasPrelockedContact = !!(prelockedContactId && !isNaN(prelockedContactId) && prelockedContactId > 0);
             const hasPrelockedCompany = !!(prelockedCompanyId && !isNaN(prelockedCompanyId) && prelockedCompanyId > 0);
 
-            const effectiveContactId = (confirmedContactId && !isNaN(confirmedContactId) ? confirmedContactId : null) || (hasPrelockedContact ? prelockedContactId : null);
-            const effectiveCompanyId = (confirmedCompanyId && !isNaN(confirmedCompanyId) ? confirmedCompanyId : null) || (hasPrelockedCompany ? prelockedCompanyId : null);
-            const effectiveFirstName = dynVars.confirmed_first_name || prelockedFirstName || '';
-            const effectiveLastName = dynVars.confirmed_last_name || prelockedLastName || '';
+            // Mid-call discovery fallback: when /phone-lookup timed out at call start
+            // (caller_context fail-safe) AND autotask_lock_contact never fired, the
+            // model often identifies the company/contact mid-call via search tools.
+            // Scan transcript for the LAST autotask_search_companies and
+            // autotask_search_contacts result that returned exactly one item, and
+            // use those as a last fallback before defaulting to AUTOTASK_DEFAULT_COMPANY_ID.
+            let discoveredContactId: number | null = null;
+            let discoveredCompanyId: number | null = null;
+            let discoveredFirstName: string | null = null;
+            let discoveredLastName: string | null = null;
+            let discoveredCompanyName: string | null = null;
+            try {
+              const transcript: any[] = payload.transcript || [];
+              for (const turn of transcript) {
+                for (const tr of (turn.tool_results || [])) {
+                  const name: string = tr.tool_name || '';
+                  const value = tr.result_value;
+                  if (typeof value !== 'string') continue;
+                  let inner: any = null;
+                  try {
+                    const mcp = JSON.parse(value);
+                    const text = mcp?.content?.[0]?.text;
+                    if (typeof text !== 'string') continue;
+                    inner = JSON.parse(text);
+                  } catch { continue; }
+                  if (inner?.summary?.returned !== 1) continue;
+                  const item = Array.isArray(inner.items) ? inner.items[0] : null;
+                  if (!item) continue;
+                  if (name.endsWith('autotask_search_companies')) {
+                    if (typeof item.id === 'number') discoveredCompanyId = item.id;
+                    if (typeof item.companyName === 'string') discoveredCompanyName = item.companyName;
+                  } else if (name.endsWith('autotask_search_contacts')) {
+                    if (typeof item.id === 'number') discoveredContactId = item.id;
+                    if (typeof item.firstName === 'string') discoveredFirstName = item.firstName;
+                    if (typeof item.lastName === 'string') discoveredLastName = item.lastName;
+                    if (!discoveredCompanyId && typeof item.companyID === 'number') {
+                      discoveredCompanyId = item.companyID;
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              this.logger.warn('Call closure: transcript scan failed', { err: (err as Error).message });
+            }
+
+            const effectiveContactId = (confirmedContactId && !isNaN(confirmedContactId) ? confirmedContactId : null) || (hasPrelockedContact ? prelockedContactId : null) || discoveredContactId;
+            const effectiveCompanyId = (confirmedCompanyId && !isNaN(confirmedCompanyId) ? confirmedCompanyId : null) || (hasPrelockedCompany ? prelockedCompanyId : null) || discoveredCompanyId;
+            const effectiveFirstName = dynVars.confirmed_first_name || prelockedFirstName || discoveredFirstName || '';
+            const effectiveLastName = dynVars.confirmed_last_name || prelockedLastName || discoveredLastName || '';
+            const effectiveCompanyName = prelockedCompanyName || discoveredCompanyName || null;
 
             const fullyIdentified = !!(effectiveContactId && effectiveCompanyId);
             const companyOnlyIdentified = !fullyIdentified && !!effectiveCompanyId;
@@ -863,7 +909,7 @@ export class AutotaskMcpServer {
             if (fullyIdentified) {
               title = `Inbound Call: ${callReason} - ${callerName}`.substring(0, 255);
             } else if (companyOnlyIdentified) {
-              const coLabel = prelockedCompanyName || `Company ${effectiveCompanyId}`;
+              const coLabel = effectiveCompanyName || `Company ${effectiveCompanyId}`;
               title = `[Unverified] Inbound Call: ${callReason} - ${coLabel}`.substring(0, 255);
             } else {
               title = `[Unverified] Inbound Call: ${callReason} - Unidentified (${callerPhone})`.substring(0, 255);
@@ -872,7 +918,7 @@ export class AutotaskMcpServer {
             const callerLine = fullyIdentified
               ? `Caller: ${callerName}`
               : companyOnlyIdentified
-                ? `Caller: Unverified contact at ${prelockedCompanyName || `company ${effectiveCompanyId}`}`
+                ? `Caller: Unverified contact at ${effectiveCompanyName || `company ${effectiveCompanyId}`}`
                 : `Caller: Unidentified (no record on file for ${callerPhone})`;
 
             const descriptionLines = [
