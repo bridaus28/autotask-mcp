@@ -350,7 +350,12 @@ export class AutotaskService {
       if (!companyID || typeof companyID !== 'number') {
         throw new Error('companyID is required (number) to create a contact');
       }
-      const body = { ...contact, companyID };
+      // Autotask requires isActive on Contact POST. Default to active (1)
+      // when caller didn't specify — matches the only sensible creation case.
+      const body: Record<string, any> = { ...contact, companyID };
+      if (body.isActive === undefined || body.isActive === null) {
+        body.isActive = 1;
+      }
       const axiosInstance = (client as any).axios;
       const response = await axiosInstance.post(`Companies/${companyID}/Contacts`, body);
       const contactId = response.data?.itemId ?? response.data?.id;
