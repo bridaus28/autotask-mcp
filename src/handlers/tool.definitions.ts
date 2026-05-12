@@ -141,13 +141,13 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Contact tools
   {
     name: 'autotask_search_contacts',
-    description: 'Search for contacts in Autotask by phone number or name. Two independent search modes - use only one per call. (1) phone: provide a complete phone number; the server extracts the last 4 digits, queries all three phone fields (phone, mobilePhone, alternatePhone) for candidates, then exact-matches the full number locally - pass only a real phone number, not names or other text. (2) searchTerm: performs a contains match across firstName, lastName, and emailAddress simultaneously - use for name or email lookups when no phone number is available. To fetch a single contact by ID, use autotask_get_contact instead. Returns 25 results per page by default.',
+    description: 'Search for contacts in Autotask by phone number or name. Two independent search modes - use only one per call. (1) phone: provide a complete phone number; the server extracts the last 4 digits, queries all three phone fields (phone, mobilePhone, alternatePhone) for candidates, then exact-matches the full number locally - pass only a real phone number, not names or other text. (2) searchTerm: a SINGLE token (last name OR first name OR email) that must appear inside one of firstName, lastName, or emailAddress — each field is checked separately, so a combined "First Last" string matches nothing. Use for name or email lookups when no phone number is available. To fetch a single contact by ID, use autotask_get_contact instead. Returns 25 results per page by default.',
     inputSchema: {
       type: 'object',
       properties: {
         searchTerm: {
           type: 'string',
-          description: 'Partial or full name or email to search for. Performs a contains match across firstName, lastName, and emailAddress. Do not use this for phone number lookups — use the phone parameter instead.'
+          description: 'A single token to look up: pass last name only, OR first name only, OR email only. Contains-matched separately against firstName, lastName, and emailAddress — a combined "First Last" string (e.g. "Bruce Rideout") matches nothing because each field is checked alone. Do not use this for phone number lookups — use the phone parameter instead.'
         },
         phone: {
           type: 'string',
@@ -234,7 +234,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
       properties: {
         searchTerm: {
           type: 'string',
-          description: 'Ticket number prefix to search for (e.g. "T20260101"). Performs a beginsWith match against the ticketNumber field only. Do not pass symptom text, names, or descriptions here — this is a structured identifier field.'
+          description: 'Ticket number or prefix to search for. Performs a beginsWith match against the ticketNumber field only. Pass the FULL ticket number when the caller gives you one (e.g. "T20260511.0088" returns that single ticket); pass a prefix (e.g. "T20260101") only when you want all tickets sharing that prefix. Do not pass symptom text, names, or descriptions here — this is a structured identifier field.'
         },
         contactID: {
           type: 'number',
