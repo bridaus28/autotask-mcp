@@ -337,15 +337,33 @@ export class AutotaskService {
 
   async createContact(contact: Partial<AutotaskContact>): Promise<number> {
     const client = await this.ensureClient();
-    
+
+    // Autotask REST API requires the parent-scoped sub-resource URL for
+    // contact creation (e.g. /Companies/{companyID}/Contacts). The flat
+    // /Contacts endpoint that autotask-node's contacts.create() targets
+    // returns "Resource not found" for valid companies. Same root-cause
+    // pattern as note creation — see createNote() below. Bypass the
+    // entity wrapper and POST directly on the underlying axios instance.
     try {
       this.logger.debug('Creating contact:', contact);
-      const result = await client.contacts.create(contact as any);
-      const contactId = (result.data as any)?.itemId ?? (result.data as any)?.id;
+      const companyID = (contact as any)?.companyID;
+      if (!companyID || typeof companyID !== 'number') {
+        throw new Error('companyID is required (number) to create a contact');
+      }
+      const body = { ...contact, companyID };
+      const axiosInstance = (client as any).axios;
+      const response = await axiosInstance.post(`Companies/${companyID}/Contacts`, body);
+      const contactId = response.data?.itemId ?? response.data?.id;
       this.logger.info(`Contact created with ID: ${contactId}`);
       return contactId;
     } catch (error) {
       this.logger.error('Failed to create contact:', error);
+      const apiErrors: string[] | undefined =
+        (error as any)?.originalError?.response?.data?.errors ||
+        (error as any)?.response?.data?.errors;
+      if (apiErrors && apiErrors.length > 0) {
+        throw new Error(`Autotask API error: ${apiErrors.join('; ')}`);
+      }
       throw error;
     }
   }
