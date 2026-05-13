@@ -492,16 +492,34 @@ export class AutotaskMcpServer {
               }
             };
 
+            // Resolve CompanyCategory name from a companyCategoryID.
+            // Returns null when id is missing or not found. Cached in the service.
+            const resolveCategory = async (categoryId: number | null | undefined) => {
+              if (categoryId === null || categoryId === undefined) {
+                return { id: null as number | null, name: null as string | null };
+              }
+              try {
+                const cat = await this.autotaskService.getCompanyCategory(categoryId);
+                return { id: cat?.id ?? Number(categoryId), name: cat?.name ?? null };
+              } catch (e) {
+                this.logger.warn('CompanyCategory resolution failed', { categoryId, err: (e as Error)?.message });
+                return { id: Number(categoryId), name: null };
+              }
+            };
+
             // Build enriched company block for a given companyID.
             const buildCompanyBlock = async (companyID: number) => {
               const company = await this.autotaskService.getCompany(companyID);
               if (!company) return null;
               const cls = await resolveClassification((company as any).classification);
+              const cat = await resolveCategory((company as any).companyCategoryID);
               return {
                 id: company.id ?? companyID,
                 name: company.companyName ?? null,
                 classification: cls.label,
                 isManaged: cls.isManaged,
+                categoryId: cat.id,
+                category: cat.name,
               };
             };
 

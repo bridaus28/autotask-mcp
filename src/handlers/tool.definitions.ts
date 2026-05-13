@@ -1194,6 +1194,20 @@ export const TOOL_DEFINITIONS: McpTool[] = [
     }
   },
   {
+    name: 'autotask_list_company_categories',
+    description: 'List CompanyCategory rows (id, name, isActive) from this Autotask instance. CompanyCategories is the routable customer-type classifier on each Company record (companyCategoryID). Examples include "Commercial" and "Residential". Use this to resolve a companyCategoryID to a human-readable name, or to discover the full set of categories on this tenant. Categories are reference data, not picklist values, and are tenant-specific.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        activeOnly: {
+          type: 'boolean',
+          description: 'When true, return only categories where isActive is true. Defaults to false (returns all rows).'
+        }
+      },
+      required: []
+    }
+  },
+  {
     name: 'autotask_get_field_info',
     description: 'Get field definitions for an Autotask entity type, including all picklist values with their integer IDs and labels. Use this to discover valid values for any picklist field before creating or updating records. entityType must match the Autotask REST API entity name exactly (e.g. "Tickets", "Companies", "Contacts", "Projects"). Optionally filter to a specific field by name.',
     inputSchema: {

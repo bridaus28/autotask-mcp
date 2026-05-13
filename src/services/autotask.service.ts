@@ -1819,6 +1819,61 @@ export class AutotaskService {
     }
   }
 
+  // -------- Company Categories --------
+  // CompanyCategories is a small, mostly-static reference entity. We list all
+  // active rows once and cache them in memory for the life of the process.
+  // Used by /phone-lookup to surface the routable customer category (e.g.
+  // "Commercial", "Residential") alongside classification.
+
+  private companyCategoryCache: Map<number, { id: number; name: string; isActive: boolean }> | null = null;
+
+  private async loadCompanyCategories(): Promise<Map<number, { id: number; name: string; isActive: boolean }>> {
+    const client = await this.ensureClient();
+    const result = await client.companyCategories.list({});
+    const rows = (result.data as any[]) || [];
+    const map = new Map<number, { id: number; name: string; isActive: boolean }>();
+    for (const r of rows) {
+      if (r && r.id != null) {
+        map.set(Number(r.id), {
+          id: Number(r.id),
+          name: String(r.name ?? r.nickname ?? `Category ${r.id}`),
+          isActive: r.isActive !== false,
+        });
+      }
+    }
+    this.companyCategoryCache = map;
+    return map;
+  }
+
+  /**
+   * List CompanyCategory rows (id, name, isActive). Cached after first load.
+   */
+  async listCompanyCategories(opts: { activeOnly?: boolean } = {}): Promise<Array<{ id: number; name: string; isActive: boolean }>> {
+    try {
+      const map = this.companyCategoryCache ?? await this.loadCompanyCategories();
+      const all = Array.from(map.values());
+      return opts.activeOnly ? all.filter(c => c.isActive) : all;
+    } catch (error) {
+      this.logger.error('Failed to list CompanyCategories:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Resolve a single category by id. Cached.
+   * Returns null when id is missing or not found.
+   */
+  async getCompanyCategory(id: number | null | undefined): Promise<{ id: number; name: string; isActive: boolean } | null> {
+    if (id === null || id === undefined) return null;
+    try {
+      const map = this.companyCategoryCache ?? await this.loadCompanyCategories();
+      return map.get(Number(id)) ?? null;
+    } catch (error) {
+      this.logger.warn('CompanyCategory resolution failed', { id, err: (error as Error)?.message });
+      return null;
+    }
+  }
+
   /**
    * Get current business status from Autotask InternalLocationWithBusinessHours and Holidays.
    * Returns business_status: 'open' | 'closed_holiday' | 'closed_weekend' | 'closed_after_hours',

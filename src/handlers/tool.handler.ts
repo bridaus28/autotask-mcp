@@ -493,6 +493,10 @@ export class AutotaskToolHandler {
         const priorities = await this.picklistCache.getTicketPriorities();
         return { result: priorities.map(p => ({ id: p.value, name: p.label, isActive: p.isActive })), message: `Found ${priorities.length} ticket priorities` };
       }],
+      ['autotask_list_company_categories', async (a) => {
+        const cats = await s.listCompanyCategories({ activeOnly: !!a.activeOnly });
+        return { result: cats, message: `Found ${cats.length} company categories` };
+      }],
       ['autotask_get_field_info', async (a) => {
         const fields = await this.picklistCache.getFields(a.entityType);
         if (a.fieldName) {
