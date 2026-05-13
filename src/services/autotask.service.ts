@@ -1908,12 +1908,28 @@ export class AutotaskService {
   }
 
   /**
-   * Resolve a single category by id. Caches per-id and falls back to a per-id GET
-   * when the bulk-load strategies fail.
+   * Tenant-specific hardcoded category names for the IDs we care about for
+   * routing. Used as a fast path AND as a fallback when the API user lacks
+   * query permission on CompanyCategories. Add new IDs here as they appear.
+   */
+  private static readonly HARDCODED_CATEGORY_NAMES: Record<number, string> = {
+    1: 'Commercial',
+    3: 'Residential',
+  };
+
+  /**
+   * Resolve a single category by id. Hardcoded fast path for known IDs,
+   * then cache, then bulk-load, then per-id GET fallback.
    */
   async getCompanyCategory(id: number | null | undefined): Promise<{ id: number; name: string; isActive: boolean } | null> {
     if (id === null || id === undefined) return null;
     const numId = Number(id);
+
+    // Hardcoded fast path. Bypasses Autotask permission requirements.
+    const hardcodedName = AutotaskService.HARDCODED_CATEGORY_NAMES[numId];
+    if (hardcodedName) {
+      return { id: numId, name: hardcodedName, isActive: true };
+    }
 
     // Fast path: cache hit.
     if (this.companyCategoryCache && this.companyCategoryCache.has(numId)) {
@@ -2130,4 +2146,3 @@ export class AutotaskService {
     return 'the next business day';
   }
 }
-// last deploy check: 2026-05-13T17:40:19Z
