@@ -291,7 +291,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
       properties: {
         ticketID: {
           type: 'number',
-          description: 'The Autotask integer ID of the ticket — obtained from a prior autotask_search_tickets result (the "id" field). Required. This is NOT a contactID (e.g. caller_context.contact_id), NOT a companyID, and NOT the ticket-number string (e.g. "T20260427.0027"). If you only have a ticket-number string, call autotask_search_tickets({searchTerm: that string}) first; the id field in its result is what you pass here.'
+          description: 'The Autotask integer ID of the ticket. Required. Any tool that returns a ticket exposes its primary id as the `id` field in the response (autotask_search_tickets, autotask_create_ticket, autotask_search_ticket_notes, etc.). Pass that `id` value here. If the caller gave you a ticket-number string (e.g. "T20260427.0027") and you don\'t have the `id` yet, run autotask_search_tickets({searchTerm: that string}) and use the `id` from the result.'
         },
         fullDetails: {
           type: 'boolean',
@@ -352,7 +352,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
       properties: {
         ticketId: {
           type: 'number',
-          description: 'The Autotask integer ID of the ticket to update. Required.'
+          description: 'The Autotask integer ID of the ticket to update. Required. Any tool that returns a ticket exposes its primary id as the `id` field in the response (autotask_search_tickets, autotask_create_ticket, autotask_search_ticket_notes, etc.). Pass that `id` value here. If the caller gave you a ticket-number string (e.g. "T20260427.0027") and you don\'t have the `id` yet, run autotask_search_tickets({searchTerm: that string}) and use the `id` from the result.'
         },
         title: {
           type: 'string',
@@ -616,7 +616,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
       properties: {
         ticketId: {
           type: 'number',
-          description: 'The integer ID of the ticket to add the note to. Required.'
+          description: 'The Autotask integer ID of the ticket. Required. Any tool that returns a ticket exposes its primary id as the `id` field in the response (autotask_search_tickets, autotask_create_ticket, autotask_search_ticket_notes, etc.). Pass that `id` value here. If the caller gave you a ticket-number string (e.g. "T20260427.0027") and you don\'t have the `id` yet, run autotask_search_tickets({searchTerm: that string}) and use the `id` from the result.'
         },
         title: {
           type: 'string',
@@ -632,7 +632,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         publish: {
           type: 'number',
-          description: 'Visibility level (instance-specific picklist). On our tenant: 1=All Autotask Users, 2=Internal Only, 3=client portal (unverified). Use 2 for standard internal notes.'
+          description: 'Visibility level (instance-specific picklist). On our tenant: 1=All Autotask Users, 2=Internal Only, 3=client portal (unverified). Default to 1: notes you create during a call are caller-facing — the caller\'s words, callback requests, status updates the customer expects on their portal. Use 2 for private operational notes (your own ambiguity flags, internal-only context).'
         }
       },
       required: ['ticketId', 'description']
