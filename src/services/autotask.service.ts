@@ -1133,7 +1133,14 @@ export class AutotaskService {
       if (!mapping) {
         throw new Error(`Unknown parent field for note creation: ${parentField}`);
       }
-      const noteData = { ...note, [mapping.bodyField]: parentId };
+      const noteData: Record<string, any> = { ...note, [mapping.bodyField]: parentId };
+      // Autotask requires the `publish` field on note POSTs; when missing the
+      // upstream call fails as an opaque 500. Default to 1 (All Users) — the
+      // overwhelmingly common case for caller-facing notes. Callers wanting
+      // an internal-only note must pass publish=2 explicitly.
+      if (noteData.publish === undefined || noteData.publish === null) {
+        noteData.publish = 1;
+      }
       const axiosInstance = (client as any).axios;
       const response = await axiosInstance.post(mapping.path, noteData);
       const noteId = response.data?.itemId ?? response.data?.id;
@@ -1141,6 +1148,14 @@ export class AutotaskService {
       return noteId;
     } catch (error) {
       this.logger.error(`Failed to create note for ${parentField}=${parentId}:`, error);
+      // Surface Autotask validation errors clearly instead of letting them
+      // bubble up as a generic 500 — mirrors createTicket's behavior.
+      const apiErrors: string[] | undefined =
+        (error as any)?.originalError?.response?.data?.errors ||
+        (error as any)?.response?.data?.errors;
+      if (apiErrors && apiErrors.length > 0) {
+        throw new Error(`Autotask API error: ${apiErrors.join('; ')}`);
+      }
       throw error;
     }
   }
