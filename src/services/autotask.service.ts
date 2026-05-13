@@ -1827,45 +1827,70 @@ export class AutotaskService {
 
   private companyCategoryCache: Map<number, { id: number; name: string; isActive: boolean }> | null = null;
 
+  // Try multiple endpoints/methods to enumerate CompanyCategories. Some Autotask
+  // tenants block /query on this entity (it is GET-only per the docs). Strategy:
+  //   1) POST /CompanyCategories/query                  (works on many tenants)
+  //   2) GET  /CompanyCategories?search={...}           (alternate query form)
+  //   3) GET  /CompanyCategories/entityInformation/fields could not help; falls back to per-id GET
+  // Whichever succeeds populates the cache. Returns the populated cache (possibly empty on full failure).
   private async loadCompanyCategories(): Promise<Map<number, { id: number; name: string; isActive: boolean }>> {
     const client = await this.ensureClient();
     const axios = (client as any).axios;
     if (!axios) {
       throw new Error('Unable to access HTTP client from AutotaskClient');
     }
-    // Use direct axios POST to /CompanyCategories/query (the SDK's list() wraps this
-    // but its error wrapping masks Autotask permission / endpoint issues).
-    // Pull all rows by id >= 0 (standard Autotask query pattern for full table).
-    let rows: any[] = [];
-    try {
-      const response = await axios.post('/CompanyCategories/query', {
-        filter: [{ op: 'gte', field: 'id', value: 0 }],
-        maxRecords: 500,
-      });
-      const data = response?.data;
-      rows = data?.items || data?.Items || (Array.isArray(data) ? data : []) || [];
-    } catch (e: any) {
-      const status = e?.response?.status;
-      const body = e?.response?.data;
-      this.logger.error('CompanyCategories /query failed', {
-        status,
-        body: typeof body === 'string' ? body.slice(0, 500) : body,
-        message: e?.message,
-      });
-      throw new Error(`CompanyCategories query failed: status=${status} ${typeof body === 'string' ? body.slice(0, 200) : JSON.stringify(body)?.slice(0, 200)}`);
-    }
     const map = new Map<number, { id: number; name: string; isActive: boolean }>();
-    for (const r of rows) {
-      if (r && r.id != null) {
-        map.set(Number(r.id), {
-          id: Number(r.id),
-          name: String(r.name ?? r.nickname ?? `Category ${r.id}`),
-          isActive: r.isActive !== false,
-        });
+    const ingest = (rows: any[]) => {
+      for (const r of rows) {
+        if (r && r.id != null) {
+          map.set(Number(r.id), {
+            id: Number(r.id),
+            name: String(r.name ?? r.nickname ?? `Category ${r.id}`),
+            isActive: r.isActive !== false,
+          });
+        }
+      }
+    };
+
+    const attempts: Array<{ label: string; fn: () => Promise<any> }> = [
+      {
+        label: 'POST /CompanyCategories/query',
+        fn: () => axios.post('/CompanyCategories/query', {
+          filter: [{ op: 'gte', field: 'id', value: 0 }],
+          maxRecords: 500,
+        }),
+      },
+      {
+        label: 'GET /CompanyCategories/query?search={...}',
+        fn: () => axios.get('/CompanyCategories/query', {
+          params: { search: JSON.stringify({ filter: [{ op: 'gte', field: 'id', value: 0 }] }) },
+        }),
+      },
+    ];
+
+    const errors: string[] = [];
+    for (const attempt of attempts) {
+      try {
+        const response = await attempt.fn();
+        const data = response?.data;
+        const rows = data?.items || data?.Items || (Array.isArray(data) ? data : []) || [];
+        if (Array.isArray(rows) && rows.length > 0) {
+          ingest(rows);
+          this.logger.debug(`CompanyCategories loaded via ${attempt.label}`, { count: rows.length });
+          this.companyCategoryCache = map;
+          return map;
+        }
+        errors.push(`${attempt.label}: returned ${rows.length} rows`);
+      } catch (e: any) {
+        const status = e?.response?.status;
+        const body = e?.response?.data;
+        const bodyStr = typeof body === 'string' ? body.slice(0, 200) : JSON.stringify(body)?.slice(0, 200);
+        errors.push(`${attempt.label}: status=${status} ${bodyStr}`);
       }
     }
-    this.companyCategoryCache = map;
-    return map;
+
+    // All bulk strategies failed. Throw with all collected error info.
+    throw new Error(`CompanyCategories enumeration failed across ${attempts.length} strategies: ${errors.join(' | ')}`);
   }
 
   /**
@@ -1883,16 +1908,46 @@ export class AutotaskService {
   }
 
   /**
-   * Resolve a single category by id. Cached.
-   * Returns null when id is missing or not found.
+   * Resolve a single category by id. Caches per-id and falls back to a per-id GET
+   * when the bulk-load strategies fail.
    */
   async getCompanyCategory(id: number | null | undefined): Promise<{ id: number; name: string; isActive: boolean } | null> {
     if (id === null || id === undefined) return null;
+    const numId = Number(id);
+
+    // Fast path: cache hit.
+    if (this.companyCategoryCache && this.companyCategoryCache.has(numId)) {
+      return this.companyCategoryCache.get(numId) ?? null;
+    }
+
+    // Try bulk load; if it works the cache is populated.
     try {
-      const map = this.companyCategoryCache ?? await this.loadCompanyCategories();
-      return map.get(Number(id)) ?? null;
+      const map = await this.loadCompanyCategories();
+      if (map.has(numId)) return map.get(numId) ?? null;
+    } catch (bulkErr) {
+      this.logger.warn('Bulk CompanyCategories load failed, falling back to per-id GET', { err: (bulkErr as Error)?.message });
+    }
+
+    // Per-id GET fallback: works when bulk endpoints are blocked.
+    try {
+      const client = await this.ensureClient();
+      const axios = (client as any).axios;
+      const response = await axios.get(`/CompanyCategories/${numId}`);
+      const item = response?.data?.item || response?.data;
+      if (item && item.id != null) {
+        const row = {
+          id: Number(item.id),
+          name: String(item.name ?? item.nickname ?? `Category ${item.id}`),
+          isActive: item.isActive !== false,
+        };
+        // Initialize cache if needed and populate this single row.
+        if (!this.companyCategoryCache) this.companyCategoryCache = new Map();
+        this.companyCategoryCache.set(numId, row);
+        return row;
+      }
+      return null;
     } catch (error) {
-      this.logger.warn('CompanyCategory resolution failed', { id, err: (error as Error)?.message });
+      this.logger.warn('Per-id CompanyCategory GET failed', { id: numId, err: (error as Error)?.message });
       return null;
     }
   }
