@@ -1829,8 +1829,31 @@ export class AutotaskService {
 
   private async loadCompanyCategories(): Promise<Map<number, { id: number; name: string; isActive: boolean }>> {
     const client = await this.ensureClient();
-    const result = await client.companyCategories.list({});
-    const rows = (result.data as any[]) || [];
+    const axios = (client as any).axios;
+    if (!axios) {
+      throw new Error('Unable to access HTTP client from AutotaskClient');
+    }
+    // Use direct axios POST to /CompanyCategories/query (the SDK's list() wraps this
+    // but its error wrapping masks Autotask permission / endpoint issues).
+    // Pull all rows by id >= 0 (standard Autotask query pattern for full table).
+    let rows: any[] = [];
+    try {
+      const response = await axios.post('/CompanyCategories/query', {
+        filter: [{ op: 'gte', field: 'id', value: 0 }],
+        maxRecords: 500,
+      });
+      const data = response?.data;
+      rows = data?.items || data?.Items || (Array.isArray(data) ? data : []) || [];
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const body = e?.response?.data;
+      this.logger.error('CompanyCategories /query failed', {
+        status,
+        body: typeof body === 'string' ? body.slice(0, 500) : body,
+        message: e?.message,
+      });
+      throw new Error(`CompanyCategories query failed: status=${status} ${typeof body === 'string' ? body.slice(0, 200) : JSON.stringify(body)?.slice(0, 200)}`);
+    }
     const map = new Map<number, { id: number; name: string; isActive: boolean }>();
     for (const r of rows) {
       if (r && r.id != null) {
