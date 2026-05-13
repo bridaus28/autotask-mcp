@@ -291,7 +291,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
       properties: {
         ticketID: {
           type: 'number',
-          description: 'The Autotask integer ID of the ticket to retrieve. Required.'
+          description: 'The Autotask integer ID of the ticket — obtained from a prior autotask_search_tickets result (the "id" field). Required. This is NOT a contactID (e.g. caller_context.contact_id), NOT a companyID, and NOT the ticket-number string (e.g. "T20260427.0027"). If you only have a ticket-number string, call autotask_search_tickets({searchTerm: that string}) first; the id field in its result is what you pass here.'
         },
         fullDetails: {
           type: 'boolean',
