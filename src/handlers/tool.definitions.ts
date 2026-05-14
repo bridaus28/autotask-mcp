@@ -18,7 +18,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Company tools
   {
     name: 'autotask_search_companies',
-    description: 'Search for companies (accounts) in Autotask. When id is provided, returns exactly one company record and all other parameters are ignored. When searching by name, searchTerm performs a case-insensitive contains match against companyName only — it does not search address, phone, or other fields. Returns 25 results per page by default.',
+    description: 'Search for companies (accounts) in Autotask. When id is provided, returns exactly one company record and all other parameters are ignored. When searching by name, searchTerm performs a case-insensitive contains match against companyName only — it does not search address, phone, or other fields. Returns 25 results per page by default. Search results are internal work and not reported to the caller. When the search returns no results matching the caller-stated company, proceed to UNVERIFIED INTAKE on companyID 0 per kb_identity_sop. When the search returns a candidate, confirm silently against the caller\'s independently-stated company name — even on a single result. On match, proceed to lock the contact within that company per existing flow. On mismatch, treat as no match.',
     inputSchema: {
       type: 'object',
       properties: {
