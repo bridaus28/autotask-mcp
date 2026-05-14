@@ -523,7 +523,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Resource tools
   {
     name: 'autotask_search_resources',
-    description: 'Search for resources (Autotask users — technicians, staff, contractors) in Autotask. searchTerm performs a contains match across firstName, lastName, and email simultaneously. Use isActive to filter to active users only. Returns 25 results per page by default.',
+    description: 'Search for resources (Autotask users — technicians, staff, contractors) in Autotask. searchTerm performs a contains match across firstName, lastName, and email simultaneously. Use isActive to filter to active users only. Returns 25 results per page by default. When a search returns no match, the search did not find an active record. The named person may still exist (former employee, record gap, spelling variant); a phonetic retry can surface the spelling case. A no-match is missing data, not confirmed absence. Continue with the caller's request per your SOP.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -556,7 +556,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_lookup_tech_status',
-    description: 'Look up a technician by name and return their availability status in one call. Available only when business_status is "open". When closed, do not call this tool — take a message or open a ticket directly. Use this when a caller asks for a specific tech by first name. The returned status field tells you what to do next:\n- "available": tech is reachable now — proceed to resolve_transfer_extension with officeExtension and transfer.\n- "not_available": tech is on the team but not reachable right now — take a message or open a ticket. Do not say cause.\n- "no_match": no exact spelling match in the resource list. The lookup matches exact spelling only; phonetic or spelling variants need a separate search. Consider a phonetic retry before continuing per your SOP.\n- "ambiguous": multiple matches — ask the caller for the last name to narrow, without naming any candidate.\n- "no_extension": tech is on the team but not phone-routable — take a message or open a ticket.\n- "presence_unavailable": could not check status — take a message or open a ticket.',
+    description: 'Look up a technician by name and return their availability status in one call. Available only when business_status is "open". When closed, do not call this tool — take a message or open a ticket directly. Use this when a caller asks for a specific tech by first name. The returned status field tells you what to do next:\n- "available": tech is reachable now — proceed to resolve_transfer_extension with officeExtension and transfer.\n- "not_available": tech is on the team but not reachable right now — take a message or open a ticket. Do not say cause.\n- "no_match": no exact spelling match in the resource list. The named person may still exist (former employee, record gap, spelling variant); a phonetic retry can surface the spelling case. A no-match is missing data, not confirmed absence. Continue with the caller\'s request per your SOP.\n- "ambiguous": multiple matches — ask the caller for the last name to narrow, without naming any candidate.\n- "no_extension": tech is on the team but not phone-routable — take a message or open a ticket.\n- "presence_unavailable": could not check status — take a message or open a ticket.',
     inputSchema: {
       type: 'object',
       properties: {
