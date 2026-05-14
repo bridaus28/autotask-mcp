@@ -523,7 +523,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Resource tools
   {
     name: 'autotask_search_resources',
-    description: 'Search for resources (Autotask users — technicians, staff, contractors) in Autotask. searchTerm performs a contains match across firstName, lastName, and email simultaneously. Use isActive to filter to active users only. Returns 25 results per page by default. When a search returns no match, the search did not find an active record. The named person may still exist (former employee, record gap, spelling variant); a phonetic retry can surface the spelling case. A no-match is missing data, not confirmed absence. Continue with the caller's request per your SOP.',
+    description: 'Search for resources (Autotask users — technicians, staff, contractors) in Autotask. searchTerm performs a contains match across firstName, lastName, and email simultaneously. Use isActive to filter to active users only. Returns 25 results per page by default. When a search returns no match, the search did not find an active record. The named person may still exist (former employee, record gap, spelling variant); a phonetic retry can surface the spelling case. A no-match is missing data, not confirmed absence. Continue with the caller\'s request per your SOP.',
     inputSchema: {
       type: 'object',
       properties: {
