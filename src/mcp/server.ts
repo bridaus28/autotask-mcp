@@ -848,12 +848,42 @@ export class AutotaskMcpServer {
             const hasPrelockedContact = !!(prelockedContactId && !isNaN(prelockedContactId) && prelockedContactId > 0);
             const hasPrelockedCompany = !!(prelockedCompanyId && !isNaN(prelockedCompanyId) && prelockedCompanyId > 0);
 
+            // Was autotask_lock_contact successfully called during this call?
+            // If not, the agent never identified the caller. Mid-call "discovery" from
+            // search-result substring matches is unsafe — the caller never confirmed.
+            // In that case fall through to the Unidentified path so the ticket lands on
+            // AUTOTASK_DEFAULT_COMPANY_ID with the phone number in the title.
+            let lockContactFired = false;
+            try {
+              const transcript: any[] = payload.transcript || [];
+              outer: for (const turn of transcript) {
+                for (const tr of (turn.tool_results || [])) {
+                  const name: string = tr.tool_name || '';
+                  if (!name.endsWith('autotask_lock_contact')) continue;
+                  if (tr.is_error) continue;
+                  const value = tr.result_value;
+                  if (typeof value !== 'string') continue;
+                  try {
+                    const obj = JSON.parse(value);
+                    if (typeof obj?.contact_id === 'number' && obj.contact_id > 0) {
+                      lockContactFired = true;
+                      break outer;
+                    }
+                  } catch { continue; }
+                }
+              }
+            } catch (err) {
+              this.logger.warn('Call closure: lock_contact scan failed', { err: (err as Error).message });
+            }
+
             // Mid-call discovery fallback: when /phone-lookup timed out at call start
             // (caller_context fail-safe) AND autotask_lock_contact never fired, the
             // model often identifies the company/contact mid-call via search tools.
             // Scan transcript for the LAST autotask_search_companies and
             // autotask_search_contacts result that returned exactly one item, and
             // use those as a last fallback before defaulting to AUTOTASK_DEFAULT_COMPANY_ID.
+            // Promotion to effective* is gated on lockContactFired below — discovery
+            // from a search hit the caller never confirmed is not safe identity.
             let discoveredContactId: number | null = null;
             let discoveredCompanyId: number | null = null;
             let discoveredFirstName: string | null = null;
@@ -893,11 +923,11 @@ export class AutotaskMcpServer {
               this.logger.warn('Call closure: transcript scan failed', { err: (err as Error).message });
             }
 
-            const effectiveContactId = (confirmedContactId && !isNaN(confirmedContactId) ? confirmedContactId : null) || (hasPrelockedContact ? prelockedContactId : null) || discoveredContactId;
-            const effectiveCompanyId = (confirmedCompanyId && !isNaN(confirmedCompanyId) ? confirmedCompanyId : null) || (hasPrelockedCompany ? prelockedCompanyId : null) || discoveredCompanyId;
-            const effectiveFirstName = dynVars.confirmed_first_name || prelockedFirstName || discoveredFirstName || '';
-            const effectiveLastName = dynVars.confirmed_last_name || prelockedLastName || discoveredLastName || '';
-            const effectiveCompanyName = prelockedCompanyName || discoveredCompanyName || null;
+            const effectiveContactId = (confirmedContactId && !isNaN(confirmedContactId) ? confirmedContactId : null) || (hasPrelockedContact ? prelockedContactId : null) || (lockContactFired ? discoveredContactId : null);
+            const effectiveCompanyId = (confirmedCompanyId && !isNaN(confirmedCompanyId) ? confirmedCompanyId : null) || (hasPrelockedCompany ? prelockedCompanyId : null) || (lockContactFired ? discoveredCompanyId : null);
+            const effectiveFirstName = dynVars.confirmed_first_name || prelockedFirstName || (lockContactFired ? discoveredFirstName : null) || '';
+            const effectiveLastName = dynVars.confirmed_last_name || prelockedLastName || (lockContactFired ? discoveredLastName : null) || '';
+            const effectiveCompanyName = prelockedCompanyName || (lockContactFired ? discoveredCompanyName : null);
 
             const fullyIdentified = !!(effectiveContactId && effectiveCompanyId);
             const companyOnlyIdentified = !fullyIdentified && !!effectiveCompanyId;
