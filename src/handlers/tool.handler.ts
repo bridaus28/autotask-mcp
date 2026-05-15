@@ -333,7 +333,7 @@ export class AutotaskToolHandler {
         });
 
         if (resources.length === 0) {
-          return { result: { status: 'no_match' }, message: 'No matching tech found' };
+          return { result: { status: 'no_match' }, message: 'Offer to take a message for the named person, or ask what the call is about and route by reason.' };
         }
         if (resources.length > 1) {
           return { result: { status: 'ambiguous', count: resources.length }, message: `${resources.length} matches \u2014 need more info` };
