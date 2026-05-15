@@ -972,14 +972,28 @@ export class AutotaskMcpServer {
             const termination = metadata.termination_reason || 'unknown';
             const callOutcome = analysis.call_successful || 'unknown';
 
+            // Title format follows MSPIntegrations convention:
+            //   [User or Company] - [Action Required] - [System or Service]
+            // ticket_action and ticket_system are filled by the agent per
+            // data_collection schemas. Fall back to a truncated call_reason
+            // if either is missing.
+            const ticketAction = (dataCollection.ticket_action?.value || '').trim();
+            const ticketSystem = (dataCollection.ticket_system?.value || '').trim() || 'General IT Support';
+            const truncatedReason = callReason.length > 60
+              ? callReason.slice(0, 60).replace(/[ ,.;:!?-]+$/, '') + '...'
+              : callReason;
+            const subjectClause = ticketAction
+              ? `${ticketAction} - ${ticketSystem}`
+              : `${truncatedReason} - ${ticketSystem}`;
+
             let title: string;
             if (fullyIdentified) {
-              title = `Inbound Call: ${callReason} - ${callerName}`.substring(0, 255);
+              title = `${callerName} - ${subjectClause}`.substring(0, 255);
             } else if (companyOnlyIdentified) {
               const coLabel = effectiveCompanyName || `Company ${effectiveCompanyId}`;
-              title = `[Unverified] Inbound Call: ${callReason} - ${coLabel}`.substring(0, 255);
+              title = `[Unverified] ${coLabel} - ${subjectClause}`.substring(0, 255);
             } else {
-              title = `[Unverified] Inbound Call: ${callReason} - Unidentified (${callerPhone})`.substring(0, 255);
+              title = `[Unverified] ${callerPhone} - ${subjectClause}`.substring(0, 255);
             }
 
             const callerLine = fullyIdentified
