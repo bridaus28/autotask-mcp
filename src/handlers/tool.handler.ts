@@ -333,7 +333,7 @@ export class AutotaskToolHandler {
         });
 
         if (resources.length === 0) {
-          return { result: { status: 'unavailable', internal_reason: 'no_match' }, message: 'Tech is not reachable. Take a message or route by reason.' };
+          return { result: { status: 'unavailable' }, message: 'Tech is not reachable. Take a message or route by reason.' };
         }
         if (resources.length > 1) {
           return { result: { status: 'ambiguous', count: resources.length }, message: `${resources.length} matches \u2014 need more info` };
