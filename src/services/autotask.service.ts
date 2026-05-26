@@ -414,6 +414,21 @@ export class AutotaskService {
     try {
       this.logger.debug('Searching tickets with options:', options);
 
+      // Default to last 90 days when caller filters by company/contact without
+      // specifying any date range. Autotask /query has no server-side sort and
+      // returns oldest-first by internal id — without this default the model
+      // has to paginate through years of history to find recent tickets.
+      // searchTerm (ticket-number lookup) is exempt; that path must find a
+      // single ticket regardless of age. No-filter calls are also exempt;
+      // there is no safe default without an identity anchor.
+      const hasDateFilter = !!(options.createdAfter || options.createdBefore || options.lastActivityAfter);
+      const hasIdentityFilter = options.companyId !== undefined || options.contactID !== undefined;
+      const hasSearchTerm = !!options.searchTerm;
+      if (!hasDateFilter && hasIdentityFilter && !hasSearchTerm) {
+        const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+        options.lastActivityAfter = ninetyDaysAgo;
+      }
+
       const filters: any[] = [];
 
       if (options.searchTerm) {
@@ -485,7 +500,9 @@ export class AutotaskService {
         });
       }
 
-      const pageSize = Math.min(options.pageSize || 25, 500);
+      // Bump default pageSize when applying the 90d default so typical companies
+      // fit in one page (Sunseri's last 90d = 17 tickets). Caller can still override.
+      const pageSize = Math.min(options.pageSize || (options.lastActivityAfter ? 50 : 25), 500);
       const queryOptions: any = {
         filter: filters,
         pageSize,
@@ -496,6 +513,13 @@ export class AutotaskService {
       const result = await client.tickets.list(queryOptions);
       const tickets = (result.data as AutotaskTicket[]) || [];
       const optimizedTickets = tickets.map(ticket => this.optimizeTicketDataAggressive(ticket));
+
+      // Newest-first sort. Autotask /query has no server-side sort and returns
+      // records by internal id ascending. id is monotonically assigned by the
+      // API and always populated, so id DESC is the most reliable proxy for
+      // recency. lastActivityDate would be more semantically correct but
+      // verified null on returned items in production (5/26).
+      optimizedTickets.sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
 
       this.logger.info(`Retrieved ${optimizedTickets.length} tickets (page ${options.page || 1}, pageSize ${pageSize})`);
       return optimizedTickets;

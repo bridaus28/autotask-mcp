@@ -228,7 +228,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Ticket tools
   {
     name: 'autotask_search_tickets',
-    description: 'Search for tickets in Autotask. searchTerm performs a beginsWith match against ticketNumber only — it accepts ticket number prefixes like "T20260101" and is not a free-text search. Use contactID or companyID to find tickets belonging to a specific person or company. No status filter is applied by default — all tickets are returned unless you filter explicitly. Search results return a condensed ticket record (key fields only, description truncated to 200 chars) — use autotask_get_ticket_details for full content on a specific ticket. Returns 25 results per page by default.',
+    description: 'Search for tickets in Autotask. searchTerm performs a beginsWith match against ticketNumber only — it accepts ticket number prefixes like "T20260101" and is not a free-text search. Use contactID or companyID to find tickets belonging to a specific person or company. No status filter is applied by default — all tickets are returned unless you filter explicitly. Search results return a condensed ticket record (key fields only, description truncated to 200 chars) — use autotask_get_ticket_details for full content on a specific ticket. When filtering by company or contact without an explicit date range, the tool applies a default last-90-days window and returns 50 results per page. Results are sorted newest-first by ticket ID. Pass createdAfter or lastActivityAfter explicitly to override the window.',
     inputSchema: {
       type: 'object',
       properties: {
