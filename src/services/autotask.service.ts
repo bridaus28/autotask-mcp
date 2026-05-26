@@ -500,9 +500,13 @@ export class AutotaskService {
         });
       }
 
-      // Bump default pageSize when applying the 90d default so typical companies
-      // fit in one page (Sunseri's last 90d = 17 tickets). Caller can still override.
-      const pageSize = Math.min(options.pageSize || (options.lastActivityAfter ? 50 : 25), 500);
+      // Bump default pageSize to API max (500) when applying the 90d default
+      // so high-volume companies fit in one response — Autotask returns ASC by
+      // internal id, so a smaller pageSize would put oldest tickets on page 1
+      // and bury the newest. 500 covers virtually every company's 90d activity
+      // (Sunseri's Bar LLC ~ 100 tickets/90d, typical managed customer < 25).
+      // Caller can still override smaller.
+      const pageSize = Math.min(options.pageSize || (options.lastActivityAfter ? 500 : 25), 500);
       const queryOptions: any = {
         filter: filters,
         pageSize,
