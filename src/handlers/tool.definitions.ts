@@ -219,6 +219,10 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         title: {
           type: 'string',
           description: 'Contact job title'
+        },
+        description: {
+          type: 'string',
+          description: 'Free-text notes attached to the contact record. Used for provenance tags (e.g. "[Ivy auto-added 2026-05-26]") and other internal notes about how or when the contact was created.'
         }
       },
       required: ['companyID', 'firstName', 'lastName']
