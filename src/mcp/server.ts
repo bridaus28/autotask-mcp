@@ -341,14 +341,38 @@ export class AutotaskMcpServer {
             const contactId = parseInt(String(parsed.contact_id), 10);
             if (!contactId || isNaN(contactId)) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'contact_id (integer) required' }));
+              res.end(JSON.stringify({ error: "contact_id (integer) required. Use the 'id' field from autotask_search_contacts result, not the 'companyID' field." }));
+              return;
+            }
+            // Range guard: contact IDs in this Autotask tenant are 8-digit
+            // integers (typically 30,000,000+). Values below 1,000,000 are
+            // almost certainly companyIDs being misrouted into the contact slot.
+            // Reject explicitly with a helpful error so the model recovers,
+            // rather than letting Autotask 500 on a non-existent contact id.
+            if (contactId < 1000000) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: `contact_id ${contactId} is too small to be a contact id in this tenant. Contact ids are 8-digit integers (e.g., 30685109). You may have passed a companyID by mistake — use the 'id' field from the autotask_search_contacts result, not 'companyID'.` }));
               return;
             }
 
-            const contact = await this.autotaskService.getContact(contactId);
+            let contact;
+            try {
+              contact = await this.autotaskService.getContact(contactId);
+            } catch (lookupErr) {
+              // Autotask SDK throws on 404 for missing contacts. Translate
+              // to a clean 404 with a helpful error rather than bubbling up
+              // as a generic 500 from the outer catch.
+              const lmsg = (lookupErr as Error)?.message || '';
+              if (/not.found|404/i.test(lmsg)) {
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: `Contact ${contactId} not found in Autotask. Verify the id from autotask_search_contacts.` }));
+                return;
+              }
+              throw lookupErr;
+            }
             if (!contact) {
               res.writeHead(404, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Contact not found' }));
+              res.end(JSON.stringify({ error: `Contact ${contactId} not found in Autotask.` }));
               return;
             }
 
