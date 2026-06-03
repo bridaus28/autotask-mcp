@@ -308,7 +308,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_ticket',
-    description: 'Create a new ticket in Autotask. companyID, title, description, status, and priority are required. Pass these integers directly — no picklist lookup needed: status: always 1 (New) for new tickets. priority: 2 (Medium) by default; 1 (High) for urgent, 4 (Critical) for security or down-systems, 3 (Low) for FYI. If assignedResourceID is set, assignedResourceRoleID is also required by Autotask. contactID must belong to the same company as companyID.',
+    description: 'Create a new ticket in Autotask. companyID, title, description, status, and priority are required. Pass these integers directly — no picklist lookup needed: status: always 1 (New) for new tickets. priority: 2 (Medium) by default; 1 (High) for urgent, 4 (Critical) for security or down-systems, 3 (Low) for FYI. Do not assign the ticket to a technician — new tickets are left unassigned for the dispatch queue. contactID must belong to the same company as companyID.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -332,14 +332,6 @@ export const TOOL_DEFINITIONS: McpTool[] = [
           type: 'number',
           description: 'Ticket priority picklist integer ID. 2 (Medium) by default; 1 (High) for urgent, 4 (Critical) for security or down-systems, 3 (Low) for FYI.'
         },
-        assignedResourceID: {
-          type: 'number',
-          description: 'Integer ID of the technician to assign. If set, assignedResourceRoleID is also required by Autotask.'
-        },
-        assignedResourceRoleID: {
-          type: 'number',
-          description: 'Role ID for the assigned resource. Required by Autotask when assignedResourceID is set.'
-        },
         contactID: {
           type: 'number',
           description: 'Integer ID of the contact on this ticket. Must belong to the same company as companyID.'
@@ -350,7 +342,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_update_ticket',
-    description: 'Update an existing ticket in Autotask. Only the fields you provide will be changed — all other fields remain untouched. ticketId is required. Use autotask_list_ticket_statuses and autotask_list_ticket_priorities to find valid picklist IDs before setting status or priority. If assignedResourceID is set, assignedResourceRoleID is also required.',
+    description: 'Update an existing ticket in Autotask. Only the fields you provide will be changed — all other fields remain untouched. ticketId is required. Use autotask_list_ticket_statuses and autotask_list_ticket_priorities to find valid picklist IDs before setting status or priority. Do not assign tickets to technicians — resource assignment is handled by dispatch, not by this agent.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -373,14 +365,6 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         priority: {
           type: 'number',
           description: 'New priority picklist integer ID. Use autotask_list_ticket_priorities to find valid IDs.'
-        },
-        assignedResourceID: {
-          type: 'number',
-          description: 'Integer ID of the technician to assign. If set, assignedResourceRoleID is also required.'
-        },
-        assignedResourceRoleID: {
-          type: 'number',
-          description: 'Role ID for the assigned resource. Required when assignedResourceID is set.'
         },
         dueDateTime: {
           type: 'string',
