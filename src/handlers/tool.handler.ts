@@ -325,22 +325,55 @@ export class AutotaskToolHandler {
           };
         }
 
-        // Step 1: search Autotask resources (active only)
-        const resources = await s.searchResources({
-          isActive: true,
-          searchTerm: searchTerm.trim(),
-          pageSize: 25,
-        });
+        // Step 1: build the phone-routable tech roster: active resources with an
+        // office extension. API and service accounts never have extensions, so
+        // this filter excludes them without relying on name or title heuristics.
+        const allActive = await s.searchResources({ isActive: true, pageSize: 100 });
+        const roster = allActive.filter((t: any) => t.officeExtension && String(t.officeExtension).trim() !== '');
 
-        if (resources.length === 0) {
-          return { result: { status: 'unavailable' }, message: 'Tech is not reachable. Take a message or route by reason.' };
+        // Match the spoken name against the roster: exact first, then small
+        // edit-distance fuzzy. STT regularly mangles names (e.g. "Reina" for
+        // "Reyna"); fuzzy matching a ~10 person roster with unique first names
+        // is safe. Threshold: 1 edit for short names, 2 for longer.
+        const norm = (x: any) => String(x || '').toLowerCase().replace(/[^a-z]/g, '');
+        const term = norm(searchTerm);
+        const editDistance = (a: string, b: string): number => {
+          const dp: number[][] = Array.from({ length: a.length + 1 }, (_, r) => {
+            const row = new Array(b.length + 1).fill(0); row[0] = r; return row;
+          });
+          for (let c = 1; c <= b.length; c++) dp[0][c] = c;
+          for (let r = 1; r <= a.length; r++)
+            for (let c = 1; c <= b.length; c++)
+              dp[r][c] = Math.min(dp[r-1][c] + 1, dp[r][c-1] + 1, dp[r-1][c-1] + (a[r-1] === b[c-1] ? 0 : 1));
+          return dp[a.length][b.length];
+        };
+        const nameFields = (t: any): string[] =>
+          [t.firstName, t.lastName, `${t.firstName || ''}${t.lastName || ''}`].map(norm).filter(Boolean);
+        const distanceTo = (t: any): number => Math.min(...nameFields(t).map(f => editDistance(term, f)));
+
+        let matches = roster.filter((t: any) => nameFields(t).includes(term));
+        if (matches.length === 0 && term.length >= 3) {
+          const maxDist = term.length <= 4 ? 1 : 2;
+          const scored = roster
+            .map((t: any) => ({ t, d: distanceTo(t) }))
+            .filter((x: any) => x.d <= maxDist)
+            .sort((x: any, y: any) => x.d - y.d);
+          if (scored.length === 1 || (scored.length > 1 && scored[0].d < scored[1].d)) {
+            matches = [scored[0].t];
+          } else if (scored.length > 1) {
+            return { result: { status: 'ambiguous', count: scored.length }, message: `${scored.length} close matches \u2014 need more info` };
+          }
         }
-        if (resources.length > 1) {
-          return { result: { status: 'ambiguous', count: resources.length }, message: `${resources.length} matches \u2014 need more info` };
+
+        if (matches.length === 0) {
+          return { result: { status: 'no_match', searchTerm: searchTerm.trim() }, message: `No tech matched "${searchTerm.trim()}"` };
+        }
+        if (matches.length > 1) {
+          return { result: { status: 'ambiguous', count: matches.length }, message: `${matches.length} matches \u2014 need more info` };
         }
 
         // Single match
-        const tech = resources[0];
+        const tech = matches[0];
         const name = `${tech.firstName || ''} ${tech.lastName || ''}`.trim() || 'Unknown';
         const title = tech.title || null;
         const ext = tech.officeExtension ? String(tech.officeExtension) : '';
