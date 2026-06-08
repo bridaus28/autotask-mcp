@@ -242,13 +242,25 @@ export class AutotaskService {
 
   async updateCompany(id: number, updates: Partial<AutotaskCompany>): Promise<void> {
     const client = await this.ensureClient();
-    
+
+    // autotask-node's accounts.update() sends PUT /Companies/{id}, which Autotask
+    // rejects with 405 (PUT would also null every field not in the body). Autotask's
+    // partial-update verb is PATCH against the collection URL with the id IN THE BODY
+    // (see REST_Updating_Data_PATCH). Bypass the SDK and PATCH directly — same pattern
+    // as createContact — and surface real Autotask validation errors.
     try {
       this.logger.debug(`Updating company ${id}:`, updates);
-      await client.accounts.update(id, updates as any);
+      const axiosInstance = (client as any).axios;
+      await axiosInstance.patch('Companies', { id, ...updates });
       this.logger.info(`Company ${id} updated successfully`);
     } catch (error) {
       this.logger.error(`Failed to update company ${id}:`, error);
+      const apiErrors: string[] | undefined =
+        (error as any)?.originalError?.response?.data?.errors ||
+        (error as any)?.response?.data?.errors;
+      if (apiErrors && apiErrors.length > 0) {
+        throw new Error(`Autotask API error: ${apiErrors.join('; ')}`);
+      }
       throw error;
     }
   }
