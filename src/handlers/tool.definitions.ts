@@ -51,7 +51,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_company',
-    description: 'Create a new company (account) in Autotask. companyName and companyType are required. companyType is a picklist integer — use autotask_get_field_info with entityType "Companies" to find valid values. ownerResourceID should reference an active resource.',
+    description: 'Create a new company (account) in Autotask. companyName and phone are required. companyType is an optional picklist integer (defaults to 1 = Customer); use autotask_get_field_info with entityType "Companies" for other valid values. Do NOT search for or pass ownerResourceID — the server assigns the account owner automatically.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -85,14 +85,14 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         ownerResourceID: {
           type: 'number',
-          description: 'Resource ID of the account owner. Use autotask_search_resources to find valid resource IDs.'
+          description: 'Account owner resource ID. Normally omit — the server assigns the default owner. Do not call autotask_search_resources to populate this.'
         },
         isActive: {
           type: 'boolean',
           description: 'Whether the company is active. Defaults to true if omitted.'
         }
       },
-      required: ['companyName', 'companyType']
+      required: ['companyName', 'phone']
     }
   },
   {

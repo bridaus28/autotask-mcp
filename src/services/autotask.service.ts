@@ -203,15 +203,39 @@ export class AutotaskService {
 
   async createCompany(company: Partial<AutotaskCompany>): Promise<number> {
     const client = await this.ensureClient();
-    
+
+    // Autotask requires companyName, companyType, phone, AND ownerResourceID on a
+    // Company POST (verified via entityInformation/fields on this instance). The
+    // model supplies name/phone/type; the server injects the account owner so the
+    // model never picks a resourceID itself (same guardrail as the create_ticket
+    // assignedResource* removal). Mirror createContact(): POST on the underlying
+    // axios instance so Autotask's field-level validation errors surface instead
+    // of collapsing into a generic "Server error (500)".
     try {
-      this.logger.debug('Creating company:', company);
-      const result = await client.accounts.create(company as any);
-      const companyId = (result.data as any)?.itemId ?? (result.data as any)?.id;
+      const body: Record<string, any> = { ...company };
+      if (body.ownerResourceID === undefined || body.ownerResourceID === null) {
+        body.ownerResourceID = parseInt(process.env.AUTOTASK_DEFAULT_OWNER_RESOURCE_ID || '4', 10);
+      }
+      if (body.companyType === undefined || body.companyType === null) {
+        body.companyType = 1; // Customer — CV default for Ivy-created intake companies
+      }
+      if (body.isActive === undefined || body.isActive === null) {
+        body.isActive = true;
+      }
+      this.logger.debug('Creating company:', body);
+      const axiosInstance = (client as any).axios;
+      const response = await axiosInstance.post('Companies', body);
+      const companyId = response.data?.itemId ?? response.data?.id;
       this.logger.info(`Company created with ID: ${companyId}`);
       return companyId;
     } catch (error) {
       this.logger.error('Failed to create company:', error);
+      const apiErrors: string[] | undefined =
+        (error as any)?.originalError?.response?.data?.errors ||
+        (error as any)?.response?.data?.errors;
+      if (apiErrors && apiErrors.length > 0) {
+        throw new Error(`Autotask API error: ${apiErrors.join('; ')}`);
+      }
       throw error;
     }
   }
