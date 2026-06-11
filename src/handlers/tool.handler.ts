@@ -227,7 +227,7 @@ export class AutotaskToolHandler {
     type H = (args: any) => Promise<{ result: any; message: string }>;
     return new Map<string, H>([
       // Connection
-      ['think', async (a) => {
+      ['think', async () => {
         // Deliberate no-op: the value is the designated reasoning space.
         return { result: 'ok', message: 'Thought logged.' };
       }],
