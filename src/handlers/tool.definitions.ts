@@ -18,7 +18,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Company tools
   {
     name: 'autotask_search_companies',
-    description: 'Search for companies (accounts) in Autotask. When id is provided, returns exactly one company record and all other parameters are ignored. When searching by name, searchTerm performs a case-insensitive contains match against companyName only — it does not search address, phone, or other fields. Returns 25 results per page by default. Search results are internal work and not reported to the caller. When result count is 0, ask the caller once to spell the name letter-by-letter before retrying or pivoting. When the search returns no results matching the caller-stated company, proceed to UNVERIFIED INTAKE on companyID 0 per kb_identity_sop. When the search returns a candidate, confirm silently against the caller\'s independently-stated company name — even on a single result. On match, proceed to lock the contact within that company per existing flow. On mismatch, treat as no match.',
+    description: 'Search for companies (accounts) in Autotask. When id is provided, returns exactly one company record and all other parameters are ignored. When searching by name, searchTerm performs a case-insensitive contains match against companyName only — it does not search address, phone, or other fields. Returns 25 results per page by default. Search results are internal work and not reported to the caller. When result count is 0, retry once with a different single distinctive word from the name; only if still zero, ask the caller once to spell the name. When the search returns no results matching the caller-stated company, proceed to UNVERIFIED INTAKE on companyID 0 per kb_identity_sop. When the search returns a candidate, confirm silently against the caller\'s independently-stated company name — even on a single result. On match, proceed to lock the contact within that company per existing flow. On mismatch, treat as no match.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -28,7 +28,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         searchTerm: {
           type: 'string',
-          description: 'Partial or full company name to search for. Performs a contains match against the companyName field only. Do not pass phone numbers, addresses, or other non-name values here.'
+          description: 'A SINGLE distinctive word from the company name (e.g. \'Conditioning\', not \'Advanced Air Conditioning\'). Contains match against companyName only: multi-word strings must appear verbatim in the name and usually return zero. Do not pass phone numbers, addresses, or other non-name values here.'
         },
         isActive: {
           type: 'boolean',
@@ -210,7 +210,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         emailAddress: {
           type: 'string',
-          description: 'Contact email address'
+          description: 'Contact email address. Optional: when omitted, the contact is automatically opted out of email workflows (solicitation, survey, bulk email, notifications) server-side.'
         },
         phone: {
           type: 'string',
