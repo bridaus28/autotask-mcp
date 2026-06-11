@@ -257,6 +257,15 @@ export class AutotaskToolHandler {
         return { result: { contact: r }, message: 'Contact retrieved successfully' };
       }],
       ['autotask_create_contact', async (a) => {
+        // No email provided: opt the contact out of email workflows so the record
+        // matches what the Autotask UI requires for emailless contacts (the UI
+        // enforces email OR the four opt-outs; the REST API enforces neither).
+        if (!a.emailAddress) {
+          a.solicitationOptOut = true;
+          a.surveyOptOut = true;
+          a.isOptedOutFromBulkEmail = true;
+          a.receivesEmailNotifications = false;
+        }
         const id = await s.createContact(a); return { result: id, message: `Successfully created contact with ID: ${id}` };
       }],
 
