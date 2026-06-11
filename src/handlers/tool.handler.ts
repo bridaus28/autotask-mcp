@@ -227,6 +227,10 @@ export class AutotaskToolHandler {
     type H = (args: any) => Promise<{ result: any; message: string }>;
     return new Map<string, H>([
       // Connection
+      ['think', async (a) => {
+        // Deliberate no-op: the value is the designated reasoning space.
+        return { result: 'ok', message: 'Thought logged.' };
+      }],
       ['autotask_test_connection', async () => {
         const ok = await s.testConnection();
         return { result: { success: ok }, message: ok ? 'Successfully connected to Autotask API' : 'Connection failed' };

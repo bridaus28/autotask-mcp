@@ -4,6 +4,24 @@
 import { McpTool } from './tool.handler.js';
 
 export const TOOL_DEFINITIONS: McpTool[] = [
+  // Reasoning scratchpad (Anthropic "think" tool pattern; no-op server-side).
+  // In voice agents tool arguments are never spoken, so this gives the model
+  // a silent channel for the pre-action reasoning it would otherwise narrate.
+  {
+    name: 'think',
+    description: 'Use the tool to think about something. It will not obtain new information or change any record; it just logs the thought. Use it when you need to reason about identity matches, tool results, or policy before deciding what to do or say.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thought: {
+          type: 'string',
+          description: 'A thought to think about.'
+        }
+      },
+      required: ['thought']
+    }
+  },
+
   // Connection testing
   {
     name: 'autotask_test_connection',
