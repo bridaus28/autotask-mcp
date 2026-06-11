@@ -192,7 +192,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_contact',
-    description: 'Create a new contact in Autotask under an existing company. companyID, firstName, and lastName are required. The contact\'s companyID must reference an active company — use autotask_search_companies to find valid company IDs.',
+    description: 'Create a new contact in Autotask under an existing company. companyID, firstName, and lastName are required. The contact\'s companyID must reference an active company — use autotask_search_companies to find valid company IDs. Receptionist flow: companyID 0 (the catch-all) is not a home for new contacts — for a new residential customer, create the residential company first (companyName "Lastname, Firstname" per COMPANY CREATION in kb_ivy_operations), then create the contact under it.',
     inputSchema: {
       type: 'object',
       properties: {

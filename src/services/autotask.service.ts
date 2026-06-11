@@ -383,7 +383,7 @@ export class AutotaskService {
     try {
       this.logger.debug('Creating contact:', contact);
       const companyID = (contact as any)?.companyID;
-      if (!companyID || typeof companyID !== 'number') {
+      if (companyID === undefined || companyID === null || typeof companyID !== 'number') {
         throw new Error('companyID is required (number) to create a contact');
       }
       // Autotask requires isActive on Contact POST. Default to active (1)
@@ -1966,8 +1966,11 @@ export class AutotaskService {
       const all = Array.from(map.values());
       return opts.activeOnly ? all.filter(c => c.isActive) : all;
     } catch (error) {
-      this.logger.error('Failed to list CompanyCategories:', error);
-      throw error;
+      // Bulk enumeration can fail when the API user lacks CompanyCategories
+      // query permission. Fall back to the hardcoded tenant map rather than
+      // erroring the tool call.
+      this.logger.warn('CompanyCategories enumeration failed; serving hardcoded fallback', { err: (error as Error)?.message });
+      return Object.entries(AutotaskService.HARDCODED_CATEGORY_NAMES).map(([id, name]) => ({ id: Number(id), name, isActive: true }));
     }
   }
 
