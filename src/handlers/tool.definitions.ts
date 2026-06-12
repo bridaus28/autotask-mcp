@@ -3,6 +3,20 @@
 
 import { McpTool } from './tool.handler.js';
 
+// Receptionist (Ivy) tool profile: the only tools served when a request
+// carries the X-Tool-Profile: receptionist header. Keep in lockstep with
+// the ElevenLabs per-tool approvals (sync_tool_approvals.py in the Ivy folder).
+export const RECEPTIONIST_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'think',
+  'autotask_search_contacts', 'autotask_get_contact',
+  'autotask_search_companies',
+  'autotask_search_tickets', 'autotask_get_ticket_details',
+  'autotask_create_ticket', 'autotask_create_ticket_note', 'autotask_update_ticket',
+  'autotask_get_field_info', 'autotask_list_ticket_statuses', 'autotask_list_ticket_priorities',
+  'autotask_lookup_tech_status', 'autotask_search_resources',
+  'autotask_create_contact', 'autotask_create_company',
+]);
+
 export const TOOL_DEFINITIONS: McpTool[] = [
   // Reasoning scratchpad (Anthropic "think" tool pattern; no-op server-side).
   // In voice agents tool arguments are never spoken, so this gives the model

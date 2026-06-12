@@ -23,6 +23,7 @@ import { McpServerConfig } from '../types/mcp.js';
 import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } from '../utils/config.js';
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
+import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
 export class AutotaskMcpServer {
@@ -63,7 +64,7 @@ export class AutotaskMcpServer {
    * Create a fresh MCP Server with all handlers registered.
    * Called per-request in HTTP (stateless) mode so each initialize gets a clean server.
    */
-  private createFreshServer(): Server {
+  private createFreshServer(toolProfile?: string): Server {
     const server = new Server(
       {
         name: this.config.name,
@@ -91,7 +92,7 @@ export class AutotaskMcpServer {
       this.logger.info('MCP Server initialized and ready to serve requests');
     };
 
-    this.setupHandlers(server);
+    this.setupHandlers(server, toolProfile);
     this.toolHandler.setServer(server);
 
     return server;
@@ -100,7 +101,7 @@ export class AutotaskMcpServer {
   /**
    * Set up all MCP request handlers
    */
-  private setupHandlers(server: Server): void {
+  private setupHandlers(server: Server, toolProfile?: string): void {
     this.logger.info('Setting up MCP request handlers...');
 
     // List available resources
@@ -136,8 +137,11 @@ export class AutotaskMcpServer {
     // List available tools
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       try {
-        this.logger.debug('Handling list tools request');
-        const tools = await this.toolHandler.listTools();
+        this.logger.debug('Handling list tools request', { toolProfile });
+        let tools = await this.toolHandler.listTools();
+        if (toolProfile === 'receptionist') {
+          tools = tools.filter(t => RECEPTIONIST_TOOL_NAMES.has(t.name));
+        }
         return { tools };
       } catch (error) {
         this.logger.error('Failed to list tools:', error);
@@ -152,6 +156,12 @@ export class AutotaskMcpServer {
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         this.logger.debug(`Handling tool call: ${request.params.name}`);
+        if (toolProfile === 'receptionist' && !RECEPTIONIST_TOOL_NAMES.has(request.params.name)) {
+          throw new McpError(
+            ErrorCode.MethodNotFound,
+            `Tool ${request.params.name} is not available in the receptionist profile`
+          );
+        }
         const result = await this.toolHandler.callTool(
           request.params.name,
           request.params.arguments || {}
@@ -285,8 +295,10 @@ export class AutotaskMcpServer {
           this.updateCredentials(credentials);
         }
 
-        // Stateless: create fresh server + transport for each request
-        const server = this.createFreshServer();
+        // Stateless: create fresh server + transport for each request.
+        // X-Tool-Profile header scopes the visible toolset (e.g. receptionist).
+        const toolProfile = String(req.headers['x-tool-profile'] || '').toLowerCase() || undefined;
+        const server = this.createFreshServer(toolProfile);
         const transport = new StreamableHTTPServerTransport({
           enableJsonResponse: true,
         });
