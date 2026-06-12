@@ -245,7 +245,21 @@ export class AutotaskToolHandler {
         const r = await s.searchCompanies(a); return { result: r, message: `Found ${r.length} companies` };
       }],
       ['autotask_create_company', async (a) => {
-        const id = await s.createCompany(a); return { result: id, message: `Successfully created company with ID: ${id}` };
+        // customer_type drives routing-relevant classification (ROUTING_VALIDATION_2026-06-12):
+        // residential accounts misroute to Business Support unless classified at create time.
+        const { customer_type, ...rest } = a;
+        if (customer_type !== 'business' && customer_type !== 'residential') {
+          throw new Error('customer_type is required and must be "business" or "residential". Ask the caller which they are if unclear.');
+        }
+        const phoneDigits = String(rest.phone ?? '').replace(/\D/g, '');
+        if (phoneDigits.length < 7) {
+          throw new Error('phone must be the caller\'s real phone number (the number they are calling from). Placeholders are not accepted.');
+        }
+        if (customer_type === 'residential') {
+          rest.classification = 13;      // Residential — verified live 2026-06-12
+          rest.companyCategoryID = 100;  // residential category — verified live 2026-06-12
+        }
+        const id = await s.createCompany(rest); return { result: id, message: `Successfully created company with ID: ${id}` };
       }],
       ['autotask_update_company', async (a) => {
         await s.updateCompany(a.id, a); return { result: undefined, message: `Successfully updated company ID: ${a.id}` };

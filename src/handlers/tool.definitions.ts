@@ -83,13 +83,18 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_company',
-    description: 'Create a new company (account) in Autotask. companyName and phone are required. companyType is an optional picklist integer (defaults to 1 = Customer); use autotask_get_field_info with entityType "Companies" for other valid values. Do NOT search for or pass ownerResourceID — the server assigns the account owner automatically.',
+    description: 'Create a new company (account) in Autotask. companyName, customer_type, and phone are required. customer_type: "residential" for home customers (companyName = "Lastname, Firstname" from the caller\'s name; routing classification is set server-side) or "business" (companyName = the company\'s stated name, spelled by the caller). phone must be the number the caller is calling from, never a placeholder — it lets future calls recognize this customer. companyType is an optional picklist integer (defaults to 1 = Customer); use autotask_get_field_info with entityType "Companies" for other valid values. Do NOT search for or pass ownerResourceID — the server assigns the account owner automatically.',
     inputSchema: {
       type: 'object',
       properties: {
         companyName: {
           type: 'string',
           description: 'Company name'
+        },
+        customer_type: {
+          type: 'string',
+          enum: ['business', 'residential'],
+          description: 'Required. Whether this account is a business or a residential (home) customer. Residential accounts are auto-classified for Home Support routing. Ask the caller if not already clear from the conversation.'
         },
         companyType: {
           type: 'number',
@@ -124,7 +129,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
           description: 'Whether the company is active. Defaults to true if omitted.'
         }
       },
-      required: ['companyName', 'phone']
+      required: ['companyName', 'customer_type', 'phone']
     }
   },
   {
