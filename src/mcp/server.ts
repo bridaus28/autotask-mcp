@@ -24,6 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
+import { matchSpokenName, PoolContact } from '../utils/name-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
 export class AutotaskMcpServer {
@@ -350,6 +351,68 @@ export class AutotaskMcpServer {
         req.on('end', async () => {
           try {
             const parsed = JSON.parse(body || '{}');
+
+            // Phase A (2026-06-11): spoken-name lock. When spoken names are
+            // provided (and no contact_id), derive the candidate pool from the
+            // caller's phone and match server-side. Fail-soft: any lookup
+            // error returns no_verdict and the agent proceeds with the
+            // standard search flow. The contact_id path below is unchanged.
+            const spokenFirst = String(parsed.spoken_first || '').trim();
+            const spokenLast = String(parsed.spoken_last || '').trim();
+            const callerPhone = String(parsed.caller_phone || '').trim();
+            if (!parsed.contact_id && (spokenFirst || spokenLast)) {
+              try {
+                if (!callerPhone) {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ status: 'no_verdict', guidance: 'caller_phone missing; proceed with the standard contact search flow.' }));
+                  return;
+                }
+                const phoneContacts = await this.autotaskService.searchContacts({ phone: callerPhone }) as PoolContact[];
+                const companyIds = [...new Set((phoneContacts || []).map(c => c.companyID).filter((x): x is number => x != null))];
+                if (companyIds.length === 0) {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ status: 'no_record', guidance: 'No record for this phone. Proceed per the Identity SOP no_match flow.' }));
+                  return;
+                }
+                if (companyIds.length > 1) {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ status: 'ambiguous_company', guidance: 'Phone maps to multiple companies. Proceed per the Identity SOP ambiguous flow.' }));
+                  return;
+                }
+                const companyID = companyIds[0];
+                let pool = await this.autotaskService.searchContacts({ companyID, pageSize: 200 } as any) as PoolContact[];
+                if (!pool || pool.length === 0) pool = phoneContacts;
+                const verdict = matchSpokenName(pool, spokenFirst, spokenLast);
+                if (verdict.status === 'locked') {
+                  const c = verdict.contact;
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    status: 'locked',
+                    match: verdict.match,
+                    contact_id: c.id,
+                    company_id: c.companyID ?? companyID,
+                    first_name: c.firstName ?? null,
+                    last_name: c.lastName ?? null,
+                    is_primary: (c as any).primaryContact ?? false,
+                  }));
+                  return;
+                }
+                if (verdict.status === 'candidates') {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: 'More than one contact could match. Ask the caller to confirm or spell their name; never list the names on file.' }));
+                  return;
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance: 'No contact by that name at the phone-matched company. The company is resolved and the contact is pending; offer Identity Capture per the SOP.' }));
+                return;
+              } catch (phaseAErr) {
+                this.logger.warn('Spoken-name lock failed; falling back to no_verdict', { err: (phaseAErr as Error)?.message });
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: 'no_verdict', guidance: 'Lookup hiccup; proceed with the standard contact search flow.' }));
+                return;
+              }
+            }
+
             const contactId = parseInt(String(parsed.contact_id), 10);
             if (!contactId || isNaN(contactId)) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
