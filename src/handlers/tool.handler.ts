@@ -9,6 +9,28 @@ import { formatCompactResponse, detectEntityType, COMPACT_SEARCH_TOOLS } from '.
 import { MappingService } from '../utils/mapping.service.js';
 import { TOOL_DEFINITIONS } from './tool.definitions.js';
 
+// Zero-result fallback for multi-word company searches (2026-06-12).
+// Autotask searchTerm is an exact-substring contains match, so STT-garbled
+// multi-word names ("RG Rubber") return 0 even when a single distinctive
+// token ("Rubber") matches uniquely. The retry rule lived in the tool
+// description and failed to fire 3x in 3 days (conv_6801, conv_0201,
+// conv_8501) — moved server-side where it always fires. Single-word zero
+// results are NOT retried: a genuine miss must stay a miss.
+const FALLBACK_STOPWORDS = new Set([
+  'inc', 'llc', 'corp', 'co', 'ltd', 'the', 'and', 'of', 'a', 'an',
+  'company', 'companies', 'group', 'services', 'service', 'solutions',
+  'technologies', 'technology', 'systems', 'enterprises', 'associates',
+  'office', 'offices', 'llp', 'aplc', 'pc',
+]);
+function companyFallbackTokens(term: string): string[] {
+  return term
+    .split(/[^a-zA-Z0-9&']+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 4 && !FALLBACK_STOPWORDS.has(t.toLowerCase()))
+    .sort((x, y) => y.length - x.length)
+    .slice(0, 2);
+}
+
 export interface McpTool {
   name: string;
   description: string;
@@ -222,9 +244,9 @@ export class AutotaskToolHandler {
   /**
    * Dispatch table: maps tool names to handler functions
    */
-  private getDispatchTable(): Map<string, (args: any) => Promise<{ result: any; message: string }>> {
+  private getDispatchTable(): Map<string, (args: any) => Promise<{ result: any; message: string; hint?: string }>> {
     const s = this.autotaskService;
-    type H = (args: any) => Promise<{ result: any; message: string }>;
+    type H = (args: any) => Promise<{ result: any; message: string; hint?: string }>;
     return new Map<string, H>([
       // Connection
       ['think', async () => {
@@ -242,7 +264,19 @@ export class AutotaskToolHandler {
           const r = await s.getCompany(a.id);
           return { result: { company: r }, message: 'Company retrieved successfully' };
         }
-        const r = await s.searchCompanies(a); return { result: r, message: `Found ${r.length} companies` };
+        let r = await s.searchCompanies(a);
+        let hint: string | undefined;
+        const term = typeof a.searchTerm === 'string' ? a.searchTerm.trim() : '';
+        if (r.length === 0 && term.length > 0 && /\s/.test(term)) {
+          for (const token of companyFallbackTokens(term)) {
+            r = await s.searchCompanies({ ...a, searchTerm: token });
+            if (r.length > 0) {
+              hint = `0 results for "${term}"; matched on fallback token "${token}". Confirm against the caller-stated company name before use.`;
+              break;
+            }
+          }
+        }
+        return { result: r, message: `Found ${r.length} companies`, hint };
       }],
       ['autotask_create_company', async (a) => {
         // customer_type drives routing-relevant classification (ROUTING_VALIDATION_2026-06-12):
@@ -630,7 +664,7 @@ export class AutotaskToolHandler {
       const handler = this.getDispatchTable().get(name);
       if (!handler) throw new Error(`Unknown tool: ${name}`);
 
-      const { result, message } = await handler(args);
+      const { result, message, hint } = await handler(args);
 
       // Skip name resolution for tools where it would cause unnecessary API calls
       // without providing value. Contact tools return IDs that Ivy uses directly.
@@ -645,6 +679,7 @@ export class AutotaskToolHandler {
           const compact = formatCompactResponse(result, entityType, {
             page: args.page,
             pageSize: args.pageSize,
+            hint,
           });
           if (!skipEnhancement) {
             compact.items = await this.enhanceItems(compact.items);

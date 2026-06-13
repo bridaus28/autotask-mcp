@@ -68,7 +68,7 @@ function pickSummaryFields(item: Record<string, any>, entityType: EntityType): R
 export function formatCompactResponse(
   items: Record<string, any>[],
   entityType: EntityType,
-  options: { page?: number; pageSize?: number; totalFetched?: number }
+  options: { page?: number; pageSize?: number; totalFetched?: number; hint?: string }
 ): CompactResponse {
   const page = options.page || 1;
   const pageSize = options.pageSize || 25;
@@ -76,9 +76,10 @@ export function formatCompactResponse(
 
   const compactItems = items.map(item => pickSummaryFields(item, entityType));
 
-  const hint = hasMore
+  const paginationHint = hasMore
     ? `Use page:${page + 1} for more results, or use get_ticket_details/show commands for full data on specific items`
     : undefined;
+  const hint = [options.hint, paginationHint].filter(Boolean).join(' | ') || undefined;
 
   return {
     summary: {
