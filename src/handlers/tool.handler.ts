@@ -679,7 +679,7 @@ export class AutotaskToolHandler {
           const compact = formatCompactResponse(result, entityType, {
             page: args.page,
             pageSize: args.pageSize,
-            hint,
+            ...(hint !== undefined && { hint }),
           });
           if (!skipEnhancement) {
             compact.items = await this.enhanceItems(compact.items);
