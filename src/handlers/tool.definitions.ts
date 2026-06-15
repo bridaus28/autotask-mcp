@@ -23,7 +23,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // a silent channel for the pre-action reasoning it would otherwise narrate.
   {
     name: 'think',
-    description: 'Use the tool to think about something. It will not obtain new information or change any record; it just logs the thought. Use it when you need to reason about identity matches, tool results, or policy before deciding what to do or say.',
+    description: 'A scratchpad: it logs a thought and nothing else — no lookup, no record change. Use it as a place for private reasoning: when a result surprises you, information conflicts, or the right move isn\'t obvious. If the next step is routine or already clear, just act.',
     inputSchema: {
       type: 'object',
       properties: {
