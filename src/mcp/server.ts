@@ -619,6 +619,7 @@ export class AutotaskMcpServer {
                 isManaged: cls.isManaged,
                 categoryId: cat.id,
                 category: cat.name,
+                web: (company as any).webAddress ?? null,
               };
             };
 
