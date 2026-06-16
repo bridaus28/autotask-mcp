@@ -399,7 +399,7 @@ export class AutotaskMcpServer {
                 }
                 if (verdict.status === 'candidates') {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
-                  res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: 'More than one contact could match. Ask the caller to confirm or spell their name; never list the names on file.' }));
+                  res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: 'The name given is not a confident match. Ask the caller to confirm or spell their name, and their last name if you only have a first, then lock again; never list the names on file.' }));
                   return;
                 }
                 res.writeHead(200, { 'Content-Type': 'application/json' });

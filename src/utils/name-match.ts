@@ -92,15 +92,20 @@ export function matchSpokenName(
     return { status: 'candidates', count: best.length };
   }
 
-  // First-name-only: lock only on a unique in-threshold match.
+  // First-name-only: a first name alone is too weak to fuzzy-lock. Short
+  // names collide (Tanya/Tony, Jon/Jan) and there is no last name to anchor,
+  // so a fuzzy match here would write confirmed_* against the wrong contact
+  // (Tanya->Tony Whetstone, 2026-06-15). Lock only on a unique EXACT first
+  // name; an in-threshold fuzzy match returns candidates so the agent gathers
+  // a last name before committing identity.
   const firstMatches = pool
     .map(c => ({ c, d: score(first, c, 'all') }))
     .filter(x => x.d <= threshold(first))
     .sort((a, b) => a.d - b.d);
   if (firstMatches.length === 0) return { status: 'new_contact' };
-  const best = firstMatches.filter(x => x.d === firstMatches[0].d);
-  if (best.length === 1) {
-    return { status: 'locked', contact: best[0].c, match: best[0].d === 0 ? 'exact' : 'fuzzy' };
+  const exact = firstMatches.filter(x => x.d === 0);
+  if (exact.length === 1) {
+    return { status: 'locked', contact: exact[0].c, match: 'exact' };
   }
-  return { status: 'candidates', count: best.length };
+  return { status: 'candidates', count: exact.length > 1 ? exact.length : firstMatches.length };
 }
