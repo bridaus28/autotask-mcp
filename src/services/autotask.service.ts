@@ -2076,11 +2076,16 @@ export class AutotaskService {
       const pad = (n: number) => String(n).padStart(2, '0');
       const todayStart = `${year}-${pad(month)}-${pad(day)}T00:00:00Z`;
       const todayEnd   = `${year}-${pad(month)}-${pad(day)}T23:59:59Z`;
+      // Array-form filter REQUIRED: autotask-node's object->array conversion keeps
+      // only the FIRST operator per field (Object.entries(value)[0]), silently
+      // dropping the lte bound -> every future holiday matched "today" (F37 bug,
+      // found 2026-07-18). Arrays pass through to the API untouched.
       const holResult  = await client.holidays.list({
-        filter: {
-          holidaySetID: { eq: holidaySetID },
-          holidayDate:  { gte: todayStart, lte: todayEnd },
-        }
+        filter: [
+          { op: 'eq',  field: 'holidaySetID', value: holidaySetID },
+          { op: 'gte', field: 'holidayDate',  value: todayStart },
+          { op: 'lte', field: 'holidayDate',  value: todayEnd },
+        ] as any
       });
       const holidays = (holResult.data as any[]) || [];
       if (holidays.length > 0) {
@@ -2154,11 +2159,13 @@ export class AutotaskService {
       endD.setDate(endD.getDate() + 14);
       const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00:00Z`;
       try {
+        // Array-form filter: see F37 note in getBusinessStatus.
         const holResult = await client.holidays.list({
-          filter: {
-            holidaySetID: { eq: holidaySetID },
-            holidayDate:  { gte: fmt(startD), lte: fmt(endD) },
-          }
+          filter: [
+            { op: 'eq',  field: 'holidaySetID', value: holidaySetID },
+            { op: 'gte', field: 'holidayDate',  value: fmt(startD) },
+            { op: 'lte', field: 'holidayDate',  value: fmt(endD) },
+          ] as any
         });
         for (const h of (holResult.data as any[]) || []) {
           if (h.holidayDate) holidayDates.add(String(h.holidayDate).substring(0, 10));
@@ -2251,11 +2258,13 @@ export class AutotaskService {
     if (holidaySetID && noHoursOnHolidays) {
       const dayStart = `${m[1]}-${m[2]}-${m[3]}T00:00:00Z`;
       const dayEnd   = `${m[1]}-${m[2]}-${m[3]}T23:59:59Z`;
+      // Array-form filter: see F37 note in getBusinessStatus.
       const holResult = await client.holidays.list({
-        filter: {
-          holidaySetID: { eq: holidaySetID },
-          holidayDate:  { gte: dayStart, lte: dayEnd },
-        }
+        filter: [
+          { op: 'eq',  field: 'holidaySetID', value: holidaySetID },
+          { op: 'gte', field: 'holidayDate',  value: dayStart },
+          { op: 'lte', field: 'holidayDate',  value: dayEnd },
+        ] as any
       });
       const holidays = (holResult.data as any[]) || [];
       if (holidays.length > 0) {
