@@ -373,6 +373,11 @@ export class AutotaskToolHandler {
         const id = await s.createProject(a); return { result: id, message: `Successfully created project with ID: ${id}` };
       }],
 
+      ['autotask_check_date_hours', async (a) => {
+        const r = await s.checkDateHours(String(a.date || ''));
+        return { result: r, message: `Business status for ${r.date}: ${r.status}` };
+      }],
+
       // Resources
       ['autotask_search_resources', async (a) => {
         const r = await s.searchResources(a); return { result: r, message: `Found ${r.length} resources` };

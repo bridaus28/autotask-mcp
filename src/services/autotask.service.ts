@@ -2076,11 +2076,16 @@ export class AutotaskService {
       const pad = (n: number) => String(n).padStart(2, '0');
       const todayStart = `${year}-${pad(month)}-${pad(day)}T00:00:00Z`;
       const todayEnd   = `${year}-${pad(month)}-${pad(day)}T23:59:59Z`;
+      // Array-form filter REQUIRED: autotask-node's object->array conversion keeps
+      // only the FIRST operator per field (Object.entries(value)[0]), silently
+      // dropping the lte bound -> every future holiday matched "today" (F37 bug,
+      // found 2026-07-18). Arrays pass through to the API untouched.
       const holResult  = await client.holidays.list({
-        filter: {
-          holidaySetID: { eq: holidaySetID },
-          holidayDate:  { gte: todayStart, lte: todayEnd },
-        }
+        filter: [
+          { op: 'eq',  field: 'holidaySetID', value: holidaySetID },
+          { op: 'gte', field: 'holidayDate',  value: todayStart },
+          { op: 'lte', field: 'holidayDate',  value: todayEnd },
+        ] as any
       });
       const holidays = (holResult.data as any[]) || [];
       if (holidays.length > 0) {
@@ -2154,11 +2159,13 @@ export class AutotaskService {
       endD.setDate(endD.getDate() + 14);
       const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00:00Z`;
       try {
+        // Array-form filter: see F37 note in getBusinessStatus.
         const holResult = await client.holidays.list({
-          filter: {
-            holidaySetID: { eq: holidaySetID },
-            holidayDate:  { gte: fmt(startD), lte: fmt(endD) },
-          }
+          filter: [
+            { op: 'eq',  field: 'holidaySetID', value: holidaySetID },
+            { op: 'gte', field: 'holidayDate',  value: fmt(startD) },
+            { op: 'lte', field: 'holidayDate',  value: fmt(endD) },
+          ] as any
         });
         for (const h of (holResult.data as any[]) || []) {
           if (h.holidayDate) holidayDates.add(String(h.holidayDate).substring(0, 10));
@@ -2211,5 +2218,94 @@ export class AutotaskService {
     }
 
     return 'the next business day';
+  }
+
+  /**
+   * Business status for an arbitrary FUTURE date (caller asks "are you open on X?").
+   * Same data sources and semantics as getBusinessStatus (default internal location,
+   * holiday set, per-weekday hours) so the two can never disagree about the schedule.
+   * Returns a schedule-level answer (no time-of-day component).
+   */
+  async checkDateHours(dateStr: string): Promise<{
+    date: string; day_of_week: string; status: string; holiday_name: string; hours: string;
+  }> {
+    const m = String(dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) {
+      throw new Error('date must be YYYY-MM-DD');
+    }
+    const d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+    // Reject rollover dates (JS Date turns 2026-02-31 into March 3 rather than erroring).
+    if (isNaN(d.getTime()) ||
+        d.getFullYear() !== parseInt(m[1], 10) ||
+        d.getMonth()    !== parseInt(m[2], 10) - 1 ||
+        d.getDate()     !== parseInt(m[3], 10)) {
+      throw new Error('invalid date');
+    }
+
+    const client = await this.ensureClient();
+    const locResult = await client.internalLocationWithBusinessHours.list({});
+    const locations = (locResult.data as any[]) || [];
+    if (locations.length === 0) {
+      throw new Error('No internal location configured in Autotask');
+    }
+    const loc               = locations.find((l: any) => l.isDefault) || locations[0];
+    const holidaySetID      = loc.holidaySetID      ?? null;
+    const noHoursOnHolidays = loc.noHoursOnHolidays ?? true;
+
+    const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+    const dayKey   = dayNames[d.getDay()];
+    // Holiday check for that date (same entity + filter shape as getBusinessStatus).
+    let holidayName = '';
+    if (holidaySetID && noHoursOnHolidays) {
+      const dayStart = `${m[1]}-${m[2]}-${m[3]}T00:00:00Z`;
+      const dayEnd   = `${m[1]}-${m[2]}-${m[3]}T23:59:59Z`;
+      // Array-form filter: see F37 note in getBusinessStatus.
+      const holResult = await client.holidays.list({
+        filter: [
+          { op: 'eq',  field: 'holidaySetID', value: holidaySetID },
+          { op: 'gte', field: 'holidayDate',  value: dayStart },
+          { op: 'lte', field: 'holidayDate',  value: dayEnd },
+        ] as any
+      });
+      const holidays = (holResult.data as any[]) || [];
+      if (holidays.length > 0) {
+        holidayName = holidays[0].holidayName || 'company holiday';
+      }
+    }
+
+    const parseTime = (raw: string): { h: number; mm: number } | null => {
+      const t = raw?.match?.(/T(\d{2}):(\d{2})/);
+      return t ? { h: parseInt(t[1], 10), mm: parseInt(t[2], 10) } : null;
+    };
+    const fmtTime = (h: number, mm: number): string => {
+      const hour12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+      const ampm   = h >= 12 ? 'PM' : 'AM';
+      return mm === 0 ? `${hour12} ${ampm}` : `${hour12}:${String(mm).padStart(2, '0')} ${ampm}`;
+    };
+
+    const start = parseTime(loc[`${dayKey}BusinessHoursStartTime`] || '');
+    const end   = parseTime(loc[`${dayKey}BusinessHoursEndTime`]   || '');
+    const hasHours = !!(start && end && !(start.h === 0 && start.mm === 0 && end.h === 0 && end.mm === 0));
+
+    let status: string;
+    let hours = '';
+    if (holidayName) {
+      status = 'closed_holiday';
+    } else if (d.getDay() === 0 || d.getDay() === 6) {
+      status = 'closed_weekend';
+    } else if (!hasHours) {
+      status = 'closed';
+    } else {
+      status = 'open';
+      hours = `${fmtTime(start!.h, start!.mm)} to ${fmtTime(end!.h, end!.mm)} Pacific`;
+    }
+
+    return {
+      date: `${m[1]}-${m[2]}-${m[3]}`,
+      day_of_week: dayKey.charAt(0).toUpperCase() + dayKey.slice(1),
+      status,
+      holiday_name: holidayName,
+      hours,
+    };
   }
 }

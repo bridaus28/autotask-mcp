@@ -14,6 +14,7 @@ export const RECEPTIONIST_TOOL_NAMES: ReadonlySet<string> = new Set([
   'autotask_create_ticket', 'autotask_create_ticket_note', 'autotask_update_ticket',
   'autotask_get_field_info', 'autotask_list_ticket_statuses', 'autotask_list_ticket_priorities',
   'autotask_lookup_tech_status', 'autotask_search_resources',
+  'autotask_check_date_hours',
   'autotask_create_contact', 'autotask_create_company',
 ]);
 
@@ -591,6 +592,21 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         }
       },
       required: ['searchTerm']
+    }
+  },
+
+  {
+    name: 'autotask_check_date_hours',
+    description: 'Check whether the office is open on a SPECIFIC CALENDAR DATE (holidays, weekends, business hours). Use when a caller asks about hours or open/closed status for a future date ("are you open on Friday July 3rd?", "what are your hours Monday?", "are you open over Thanksgiving?"). Resolve the caller\'s spoken date to YYYY-MM-DD using system__time before calling. Answer from the result — never guess holiday hours. status values: "open" (hours field says the hours), "closed_holiday" (holiday_name says which holiday), "closed_weekend", "closed". For TODAY\'s live status keep using the business_status dynamic variable, not this tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        date: {
+          type: 'string',
+          description: 'The calendar date to check, formatted YYYY-MM-DD.'
+        }
+      },
+      required: ['date']
     }
   },
 
