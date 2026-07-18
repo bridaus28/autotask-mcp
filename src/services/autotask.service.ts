@@ -2234,7 +2234,11 @@ export class AutotaskService {
       throw new Error('date must be YYYY-MM-DD');
     }
     const d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
-    if (isNaN(d.getTime())) {
+    // Reject rollover dates (JS Date turns 2026-02-31 into March 3 rather than erroring).
+    if (isNaN(d.getTime()) ||
+        d.getFullYear() !== parseInt(m[1], 10) ||
+        d.getMonth()    !== parseInt(m[2], 10) - 1 ||
+        d.getDate()     !== parseInt(m[3], 10)) {
       throw new Error('invalid date');
     }
 
@@ -2250,9 +2254,6 @@ export class AutotaskService {
 
     const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
     const dayKey   = dayNames[d.getDay()];
-    const pad = (n: number) => String(n).padStart(2, '0');
-    void pad;
-
     // Holiday check for that date (same entity + filter shape as getBusinessStatus).
     let holidayName = '';
     if (holidaySetID && noHoursOnHolidays) {
