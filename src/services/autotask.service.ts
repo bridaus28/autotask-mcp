@@ -593,6 +593,10 @@ export class AutotaskService {
     if (ticket.companyID !== undefined) optimized.companyID = ticket.companyID;
     if (ticket.contactID !== undefined) optimized.contactID = ticket.contactID;
     if (ticket.assignedResourceID !== undefined) optimized.assignedResourceID = ticket.assignedResourceID;
+    // queueID is required by /phone-lookup to exclude machine-generated monitoring
+    // tickets from the caller-facing continuity list. One integer per ticket.
+    // Without it here the downstream filter silently passes everything.
+    if (ticket.queueID !== undefined) optimized.queueID = ticket.queueID;
     if (ticket.createDate !== undefined) optimized.createDate = ticket.createDate;
     if (ticket.lastActivityDate !== undefined) optimized.lastActivityDate = ticket.lastActivityDate;
     if (ticket.dueDateTime !== undefined) optimized.dueDateTime = ticket.dueDateTime;

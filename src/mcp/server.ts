@@ -27,6 +27,21 @@ import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
 import { matchSpokenName, PoolContact } from '../utils/name-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
+// ─── Tenant constants shared by /phone-lookup and /call-closure ───────────────
+// Autotask queues whose tickets are machine-generated and never something a caller
+// rings about: 8 = monitoring (CheckCentral, Backup Monitor, BackupIQ, Datto AV/EDR).
+// Verified 2026-07-26 against 87 live open tickets: queueID 8 caught all 11
+// machine-generated ones with no false positives. Add ids here if more appear.
+// NOT listed: Merged Tickets — those are set Complete on merge, so a status!==5
+// filter already removes them.
+// Tenant-specific ids. Mirror any change in ITGlue alongside the queue list.
+//
+// Module scope on purpose: BOTH the open-ticket preload and the call-closure
+// silent-caller bind must exclude the same queues, or a caller who says nothing gets
+// their call filed against a backup alert.
+export const EXCLUDED_QUEUE_IDS = new Set<number>([8]);
+
+
 export class AutotaskMcpServer {
   private server: Server;
   private config: McpServerConfig;
@@ -555,6 +570,7 @@ export class AutotaskMcpServer {
                 contacts: [],
                 company: null,
                 openTickets: [],
+                openTicketsTotal: 0,
                 ambiguousCandidates: null,
               }));
               return;
@@ -623,9 +639,28 @@ export class AutotaskMcpServer {
               };
             };
 
+            // Ceiling on open tickets surfaced to Ivy. Set high on purpose: the point
+            // is that the list is COMPLETE for every real company, so Ivy can trust
+            // "nothing here fits" and skip the pre-create search. Measured 2026-07-26,
+            // caller-facing open tickets: Applied Conveyor 11, RD Rubber 14, Kho &
+            // Patel 12, Jacob & Assoc 0; Brian's stated worst case ~30 pre-filter.
+            // 20 therefore truncates nobody today. It exists only so caller_context
+            // stays bounded if a company ever balloons (migration, onboarding).
+            // If it DOES truncate, /phone-lookup reports the true total and the Twilio
+            // renderer says "N of M open shown", which tells Ivy to search.
+            const MAX_OPEN_TICKETS = 20;
+
             // Build open-ticket list for a company. Picklist-resolves status label
-            // and looks up assignee resource name. Top 5 by lastActivityDate desc.
-            // Filters out tickets with status=5 (Complete) client-side.
+            // and looks up assignee resource name. Top MAX_OPEN_TICKETS by
+            // lastActivityDate desc. Filters out status=5 (Complete) and
+            // monitoring-queue tickets client-side.
+            //
+            // KNOWN LIMITATION (not fixed here): Autotask /query has no server-side
+            // sort, so pageSize:50 takes the first 50 by internal ID ascending within
+            // the 90-day window, and only then do we sort by lastActivity. A company
+            // with >50 tickets active in 90 days can have its newest tickets truncated
+            // before the sort sees them. Raising pageSize costs /phone-lookup latency
+            // on the pre-speech critical path; tracked separately.
             const buildOpenTickets = async (companyID: number) => {
               try {
                 // Autotask's /query endpoint has no server-side sort — records always
@@ -634,22 +669,46 @@ export class AutotaskMcpServer {
                 // lastActivityAfter to restrict to the last 90 days, and a small pageSize.
                 // A typical managed customer has fewer than 50 tickets active in 90 days.
                 const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+                // NO pageSize override. searchTickets defaults to 500 whenever a date
+                // filter is present, precisely because Autotask returns ID-ascending and
+                // a small page puts the OLDEST tickets on page 1. Passing pageSize:50
+                // here reintroduced that bug: at a busy client 84-87% of the 90-day
+                // window is Complete, so the first 50 by id yielded only 2-4 surviving
+                // open tickets while 12-16 were actually open. Measured 2026-07-26:
+                //   Applied Conveyor 102 in 90d / 86 complete / 16 open -> 4 surfaced
+                //   Kho & Patel       91 in 90d / 79 complete / 12 open -> 2 surfaced
+                //   RD Rubber        110 in 90d / 96 complete / 14 open -> 2 surfaced
+                // /phone-lookup measured at 2.3s for the busiest of these against a
+                // 7s LOOKUP_BUDGET_MS, so the full page is affordable.
                 const tickets = await this.autotaskService.searchTickets({
                   companyId: companyID,
-                  pageSize: 50,
                   lastActivityAfter: ninetyDaysAgo,
                 } as any);
 
-                const openTickets = tickets
+                const callerFacing = tickets
                   .filter(t => t.status !== 5)
+                  // Machine-generated tickets (RMM/backup/AV monitoring) live in the
+                  // monitoring queue. They are internal artifacts, not things a caller
+                  // rings about: asking "is this about the overdue check on JA-SRV-DC?"
+                  // is confusing and leaks internal monitoring. Excluded from the
+                  // caller-facing continuity list entirely — a company whose only open
+                  // tickets are alerts correctly reads as "no open work" to Ivy.
+                  // Verified 2026-07-26 against 87 preloaded tickets: queueID 8 caught
+                  // all 11 machine-generated ones with no false positives.
+                  .filter(t => !EXCLUDED_QUEUE_IDS.has((t as any).queueID))
                   .sort((a: any, b: any) => {
                     const da = a.lastActivityDate ? Date.parse(a.lastActivityDate) : 0;
                     const db = b.lastActivityDate ? Date.parse(b.lastActivityDate) : 0;
                     return db - da;
-                  })
-                  .slice(0, 5);
+                  });
 
-                if (openTickets.length === 0) return [];
+                // Total caller-facing open tickets, BEFORE the display cap. Ivy uses
+                // this to tell a complete list from a truncated one: a complete list
+                // that matches nothing lets her skip the pre-create search.
+                const totalOpen = callerFacing.length;
+                const openTickets = callerFacing.slice(0, MAX_OPEN_TICKETS);
+
+                if (openTickets.length === 0) return { items: [], totalOpen: 0 };
 
                 // Resolve status labels (one picklist lookup, cached)
                 let statusMap: Map<string, string> = new Map();
@@ -677,16 +736,21 @@ export class AutotaskMcpServer {
                   }
                 }));
 
-                return openTickets.map((t: any) => ({
-                  number:        t.ticketNumber ?? null,
-                  title:         t.title ?? null,
-                  statusLabel:   statusMap.get(String(t.status)) ?? null,
-                  assigneeName:  t.assignedResourceID ? (assigneeNames.get(t.assignedResourceID) ?? null) : null,
-                  lastActivity:  t.lastActivityDate ?? null,
-                }));
+                return {
+                  items: openTickets.map((t: any) => ({
+                    id:            t.id ?? null,
+                    number:        t.ticketNumber ?? null,
+                    title:         t.title ?? null,
+                    statusLabel:   statusMap.get(String(t.status)) ?? null,
+                    assigneeName:  t.assignedResourceID ? (assigneeNames.get(t.assignedResourceID) ?? null) : null,
+                    lastActivity:  t.lastActivityDate ?? null,
+                    contactID:     t.contactID ?? null,
+                  })),
+                  totalOpen,
+                };
               } catch (e) {
                 this.logger.warn('Open ticket fetch failed', { companyID, err: (e as Error)?.message });
-                return [];
+                return { items: [], totalOpen: 0 };
               }
             };
 
@@ -703,6 +767,7 @@ export class AutotaskMcpServer {
                   contacts: [],
                   company: null,
                   openTickets: [],
+                  openTicketsTotal: 0,
                   ambiguousCandidates: null,
                 }));
                 return;
@@ -710,7 +775,7 @@ export class AutotaskMcpServer {
               // Case 4: company main phone match. Take the first (most common case).
               const primaryCompany = companies[0];
               const companyID = primaryCompany.id as number;
-              const [companyBlock, openTickets] = await Promise.all([
+              const [companyBlock, openTicketsResult] = await Promise.all([
                 buildCompanyBlock(companyID),
                 buildOpenTickets(companyID),
               ]);
@@ -720,7 +785,8 @@ export class AutotaskMcpServer {
                 count: 0,
                 contacts: [],
                 company: companyBlock,
-                openTickets,
+                openTickets: openTicketsResult.items,
+                openTicketsTotal: openTicketsResult.totalOpen,
                 ambiguousCandidates: null,
               }));
               return;
@@ -767,6 +833,7 @@ export class AutotaskMcpServer {
                 contacts: contacts.map(contactOut),
                 company: null,
                 openTickets: [],
+                openTicketsTotal: 0,
                 ambiguousCandidates,
               }));
               return;
@@ -774,9 +841,9 @@ export class AutotaskMcpServer {
 
             // Cases 1 & 2: single company (whether one contact or several at same company).
             const companyID = uniqueCompanyIDs[0];
-            const [companyBlock, openTickets] = companyID
+            const [companyBlock, openTicketsResult] = companyID
               ? await Promise.all([buildCompanyBlock(companyID), buildOpenTickets(companyID)])
-              : [null, []];
+              : [null, { items: [], totalOpen: 0 }];
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -784,7 +851,8 @@ export class AutotaskMcpServer {
               count: contacts.length,
               contacts: contacts.map(contactOut),
               company: companyBlock,
-              openTickets,
+              openTickets: openTicketsResult.items,
+              openTicketsTotal: openTicketsResult.totalOpen,
               ambiguousCandidates: null,
             }));
           } catch (err) {
@@ -1150,6 +1218,65 @@ export class AutotaskMcpServer {
                 this.logger.warn('Call closure: failed to update existing ticket, will create new', {
                   ticketNumber: existingTicketNumber,
                   error: noteErr,
+                });
+                // Fall through to create a new ticket
+              }
+            }
+
+            // -- Silent-caller binding: an identified caller who said nothing --
+            // The caller hung up or never stated a reason, so there is no transcript for
+            // EL to extract support_ticket_number from, and the block above could not
+            // fire. But we still know who called. If they have exactly one recent open
+            // ticket, that is overwhelmingly what the call was about; a fresh ticket
+            // just splits the story. Measured 2026-07-26: 35 short calls in 9 days, 6
+            // with identity AND open tickets, 4 with exactly one, and ZERO with a
+            // support_ticket_number extracted.
+            //
+            // Strictly one candidate. With two or more, guessing is worse than a
+            // duplicate: a wrong bind buries the call inside someone else's ticket.
+            // publish=2 because the caller gave us nothing customer-facing to report.
+            if (!existingTicketNumber && effectiveCompanyId && !hasRealCallReason) {
+              try {
+                const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+                const since = new Date(Date.now() - THIRTY_DAYS_MS).toISOString();
+                const recent = await this.autotaskService.searchTickets({
+                  companyId: effectiveCompanyId,
+                  lastActivityAfter: since,
+                } as any);
+                const candidates = recent.filter(
+                  tk => tk.status !== 5 && !EXCLUDED_QUEUE_IDS.has((tk as any).queueID)
+                );
+                if (candidates.length === 1) {
+                  const only = candidates[0];
+                  await this.autotaskService.createTicketNote(only.id!, {
+                    title: 'Ivy Call Closure Update',
+                    description,
+                    noteType: 1,
+                    publish: 2,
+                  });
+                  this.logger.info('Call closure: silent caller bound to sole open ticket', {
+                    ticketId: only.id,
+                    ticketNumber: only.ticketNumber,
+                    companyId: effectiveCompanyId,
+                    conversationId: payload.conversation_id,
+                  });
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    ticket_id: only.id,
+                    ticket_number: only.ticketNumber,
+                    action: 'updated',
+                  }));
+                  return;
+                }
+                this.logger.info('Call closure: silent caller, no sole candidate, creating', {
+                  companyId: effectiveCompanyId,
+                  candidateCount: candidates.length,
+                  conversationId: payload.conversation_id,
+                });
+              } catch (bindErr) {
+                this.logger.warn('Call closure: silent-caller bind failed, will create new', {
+                  companyId: effectiveCompanyId,
+                  error: bindErr,
                 });
                 // Fall through to create a new ticket
               }
