@@ -1223,6 +1223,111 @@ export class AutotaskMcpServer {
               }
             }
 
+            // -- Tool-history binding: which ticket did Ivy actually work on? --
+            // The support_ticket_number check above only fires when a ticket NUMBER was
+            // SPOKEN, because that value comes from EL's extractor reading the transcript.
+            // Ivy is instructed not to recite numbers at callers (KB Gate B, Speaking SOP),
+            // so on a call where she noted or updated an existing ticket without saying its
+            // number, closure had no idea and created a duplicate. Observed 2026-07-26 on
+            // conv_2601kygjncg9etb9fwztqcaq648x: she called update_ticket{ticketId:57465}
+            // twice and closure still created T20260726.0012.
+            //
+            // The webhook payload carries the full tool history, so we can read what she DID
+            // instead of inferring from what was said. Precedent: commit 01882bcd already
+            // scans payload.transcript for company/contact discovery.
+            //
+            // Priority, strongest evidence first (agreed with Brian 2026-07-26):
+            //   1. created  - a ticket she opened during the call IS this call's ticket
+            //   2. noted    - she deliberately recorded this call against it
+            //   3. updated  - she acted on it
+            // Merely VIEWING a ticket (get_ticket_details) deliberately does NOT count.
+            // Looking is not acting, and a wrong bind buries the call in someone else's
+            // ticket; a duplicate is recoverable because a human can merge.
+            //
+            // Ambiguity (two different tickets noted, or two updated) also falls through to
+            // create, for the same reason.
+            const findWorkedTicketId = (): number | null => {
+              try {
+                const turns: any[] = payload.transcript || [];
+                const created: number[] = [];
+                const noted: number[] = [];
+                const updated: number[] = [];
+
+                for (const turn of turns) {
+                  // create_ticket: the new id is only in the RESULT, not the params.
+                  for (const tr of (turn.tool_results || [])) {
+                    const name: string = tr.tool_name || '';
+                    if (!name.endsWith('autotask_create_ticket')) continue;
+                    const value = tr.result_value;
+                    if (typeof value !== 'string') continue;
+                    try {
+                      const text = JSON.parse(value)?.content?.[0]?.text;
+                      const inner = typeof text === 'string' ? JSON.parse(text) : null;
+                      const id = inner?.data?.id;
+                      if (typeof id === 'number') created.push(id);
+                    } catch { /* not parseable, skip */ }
+                  }
+                  // note / update: the ticket id is in the PARAMS. Intent counts even if the
+                  // call errored - a failed update still tells us which ticket she meant.
+                  for (const tc of (turn.tool_calls || [])) {
+                    const name: string = tc.tool_name || '';
+                    const raw = tc.params_as_json;
+                    if (typeof raw !== 'string') continue;
+                    let params: any = null;
+                    try { params = JSON.parse(raw); } catch { continue; }
+                    // Autotask tools are inconsistent about the casing of this argument.
+                    const id = params?.ticketId ?? params?.ticketID;
+                    if (typeof id !== 'number') continue;
+                    if (name.endsWith('autotask_create_ticket_note')) noted.push(id);
+                    else if (name.endsWith('autotask_update_ticket')) updated.push(id);
+                  }
+                }
+
+                // Tier 1: a ticket she created. Always safe to note - she just made it.
+                if (created.length > 0) return created[created.length - 1];
+                // Tiers 2 and 3: bind only when unambiguous.
+                for (const tier of [noted, updated]) {
+                  const distinct = Array.from(new Set(tier));
+                  if (distinct.length === 1) return distinct[0];
+                  if (distinct.length > 1) return null; // ambiguous -> create, human merges
+                }
+                return null;
+              } catch (e) {
+                this.logger.warn('Call closure: tool-history scan failed', { err: (e as Error)?.message });
+                return null;
+              }
+            };
+
+            if (!existingTicketNumber) {
+              const workedTicketId = findWorkedTicketId();
+              if (workedTicketId) {
+                try {
+                  await this.autotaskService.createTicketNote(workedTicketId, {
+                    title: 'Ivy Call Closure Update',
+                    description,
+                    noteType: 1,
+                    publish: 2,
+                  });
+                  this.logger.info('Call closure: bound to ticket from tool history', {
+                    ticketId: workedTicketId,
+                    conversationId: payload.conversation_id,
+                  });
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    ticket_id: workedTicketId,
+                    action: 'updated',
+                  }));
+                  return;
+                } catch (bindErr) {
+                  this.logger.warn('Call closure: tool-history bind failed, will create new', {
+                    ticketId: workedTicketId,
+                    error: bindErr,
+                  });
+                  // Fall through to create a new ticket
+                }
+              }
+            }
+
             // -- Silent-caller binding: an identified caller who said nothing --
             // The caller hung up or never stated a reason, so there is no transcript for
             // EL to extract support_ticket_number from, and the block above could not
