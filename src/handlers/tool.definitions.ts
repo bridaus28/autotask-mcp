@@ -380,7 +380,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_update_ticket',
-    description: 'Update an existing ticket in Autotask. Only the fields you provide will be changed — all other fields remain untouched. ticketId is required. Use autotask_list_ticket_statuses and autotask_list_ticket_priorities to find valid picklist IDs before setting status or priority. Do not assign tickets to technicians — resource assignment is handled by dispatch, not by this agent.',
+    description: 'Update an existing ticket in Autotask. Only the fields you provide will be changed — all other fields remain untouched. ticketId is required. Use autotask_list_ticket_statuses and autotask_list_ticket_priorities to find valid picklist IDs before setting status or priority; never guess a picklist integer. Do not assign tickets to technicians — resource assignment is handled by dispatch, not by this agent. Do not resolve or close tickets: never set status to Complete or RMM Complete, even when the caller says the problem is fixed. A caller reporting something is resolved is information to record with autotask_create_ticket_note; a technician decides when work is finished. The one status this agent sets deliberately is Customer Noted, and only to reopen a ticket completed within the last 7 days before noting it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -398,7 +398,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         status: {
           type: 'number',
-          description: 'New status picklist integer ID. Use autotask_list_ticket_statuses to find valid IDs.'
+          description: 'New status picklist integer ID. Use autotask_list_ticket_statuses to find valid IDs — never invent one. Do not set Complete or RMM Complete; closing a ticket is a technician decision, not a caller request.'
         },
         priority: {
           type: 'number',
