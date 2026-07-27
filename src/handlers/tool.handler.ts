@@ -516,7 +516,46 @@ export class AutotaskToolHandler {
       }],
       ['autotask_create_ticket_note', async (a) => {
         const id = await s.createTicketNote(a.ticketId, { title: a.title, description: a.description, noteType: a.noteType, publish: a.publish });
-        return { result: id, message: `Successfully created ticket note with ID: ${id}` };
+
+        // A caller-visible note (publish=1) advances the ticket to "Customer Noted"
+        // automatically. The KB has instructed the agent to do this as a second
+        // autotask_update_ticket call since v213, and it does not happen: measured
+        // 2026-07-26 over 191 calls, 28 notes were written and only 2 were followed by
+        // an update (7%). The step has no in-call payoff and competes with a pending
+        // transfer, so more prompt text will not fix it. Doing it here makes it
+        // unconditional.
+        //
+        // Deliberately NOT done for publish=2 (internal notes, including the
+        // /call-closure report) — those are not customer communication.
+        //
+        // Best-effort: a failure here must never fail the note. The note is the
+        // durable record; the status is bookkeeping. Autotask has returned HTTP 500
+        // on PATCH for tickets under edit lock (observed 2026-07-20 on ticket 57186).
+        let statusMsg = '';
+        if (a.publish === 1) {
+          try {
+            const current = await s.getTicket(a.ticketId);
+            const currentStatus = current?.status;
+            const statuses = await this.picklistCache.getTicketStatuses();
+            const cn = statuses.find(x => String(x.label).toLowerCase() === 'customer noted');
+            const customerNotedId = cn ? parseInt(String(cn.value), 10) : null;
+            const COMPLETE = 5;
+            if (
+              customerNotedId != null &&
+              currentStatus !== COMPLETE &&
+              currentStatus !== customerNotedId
+            ) {
+              await s.updateTicket(a.ticketId, { status: customerNotedId });
+              statusMsg = ' Ticket status set to Customer Noted.';
+            }
+          } catch (noteStatusErr) {
+            this.logger.warn('Ticket note saved but status update to Customer Noted failed', {
+              ticketId: a.ticketId,
+              err: (noteStatusErr as Error)?.message,
+            });
+          }
+        }
+        return { result: id, message: `Successfully created ticket note with ID: ${id}.${statusMsg}` };
       }],
       ['autotask_get_project_note', async (a) => {
         const r = await s.getProjectNote(a.projectId, a.noteId); return { result: r, message: 'Project note retrieved successfully' };
