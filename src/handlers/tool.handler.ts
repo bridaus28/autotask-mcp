@@ -9,6 +9,37 @@ import { formatCompactResponse, detectEntityType, COMPACT_SEARCH_TOOLS } from '.
 import { MappingService } from '../utils/mapping.service.js';
 import { TOOL_DEFINITIONS } from './tool.definitions.js';
 
+// ─── Statuses a caller-visible note may advance to "Customer Noted" ───────────
+// ALLOWLIST, not a denylist. Ivy may only move a ticket to Customer Noted from a
+// status where doing so is safe. Anything not listed is left alone.
+//
+// Deliberately EXCLUDED and why:
+//   10 Dispatched          a tech is assigned out or en route; moving it off the
+//                          dispatch board loses the assignment
+//   29 Scheduled           an appointment is booked; same problem
+//    5 Complete            reopening is a deliberate act, not a side effect. The
+//                          KB's <=7-day rule has Ivy reopen to Customer Noted via
+//                          autotask_update_ticket FIRST, so by note time the
+//                          status is already 19 and this is a no-op anyway
+//   20 RMM Complete        closed by automation
+//   25 Escalate from MC / 26 MC - Needs Info / 27 MC - Out of Scope /
+//   28 Escalate to MC      co-managed escalation workflow, not ours to unwind
+//
+// Source: Brian, 2026-07-26. Resolved against live Autotask the same day (18
+// statuses total). Tenant-specific ids — mirror any change in ITGlue.
+const CUSTOMER_NOTED_SOURCE_STATUSES = new Set<number>([
+  1,   // New
+  7,   // Waiting Customer
+  8,   // In Progress
+  9,   // Waiting Materials
+  12,  // Waiting Vendor
+  21,  // Follow up
+  22,  // Ready Delivery
+  23,  // Ready Pickup
+  24,  // Waiting Notes
+]);
+
+
 // Zero-result fallback for multi-word company searches (2026-06-12).
 // Autotask searchTerm is an exact-substring contains match, so STT-garbled
 // multi-word names ("RG Rubber") return 0 even when a single distinctive
@@ -539,12 +570,7 @@ export class AutotaskToolHandler {
             const statuses = await this.picklistCache.getTicketStatuses();
             const cn = statuses.find(x => String(x.label).toLowerCase() === 'customer noted');
             const customerNotedId = cn ? parseInt(String(cn.value), 10) : null;
-            const COMPLETE = 5;
-            if (
-              customerNotedId != null &&
-              currentStatus !== COMPLETE &&
-              currentStatus !== customerNotedId
-            ) {
+            if (customerNotedId != null && CUSTOMER_NOTED_SOURCE_STATUSES.has(currentStatus as number)) {
               await s.updateTicket(a.ticketId, { status: customerNotedId });
               statusMsg = ' Ticket status set to Customer Noted.';
             }
