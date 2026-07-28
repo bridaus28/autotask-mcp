@@ -33,6 +33,25 @@ import { FieldInfo, PicklistValue } from './picklist.cache';
 import { buildPhoneCandidateSearch, isExactPhoneMatch } from '../utils/phone';
 
 /**
+ * True when an Autotask entity GET failed because the id is not a record, as
+ * opposed to a transport, auth or 5xx failure.
+ *
+ * getCompany/getContact throw on a 404 rather than returning null, so an
+ * existence check has to classify the error. The distinction matters: "this id
+ * is not a record" is a usable answer, "Autotask is unreachable" is not, and
+ * conflating them would have the consumer telling a caller their company does
+ * not exist during an outage. Observed message from autotask-node for a
+ * non-existent id is exactly "Resource not found".
+ */
+export function isNotFoundError(error: unknown): boolean {
+  const e = error as any;
+  const status = e?.response?.status ?? e?.originalError?.response?.status ?? e?.status;
+  if (status === 404) return true;
+  if (typeof status === 'number') return false; // a real HTTP status that is not 404
+  return /resource not found/i.test(String(e?.message ?? ''));
+}
+
+/**
  * Decide the ticket-query window and page size. Pure; no I/O.
  *
  * Extracted from searchTickets so the MCP layer can report the SAME effective

@@ -2,7 +2,7 @@
 // Handles MCP tool calls for Autotask operations (search, create, update)
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { AutotaskService, resolveTicketQuery } from '../services/autotask.service.js';
+import { AutotaskService, resolveTicketQuery, isNotFoundError } from '../services/autotask.service.js';
 import { PicklistCache, PicklistValue } from '../services/picklist.cache.js';
 import { Logger } from '../utils/logger.js';
 import { formatCompactResponse, detectEntityType, COMPACT_SEARCH_TOOLS } from '../utils/response.formatter.js';
@@ -388,10 +388,24 @@ export class AutotaskToolHandler {
         // ambiguous_multi_company branch). All returned 0. On conv_...3kmpgy1bdp
         // the caller was told "I don't see any open tickets for Consolidated
         // Services" three times; she had three, and the real companyID was 822.
+        // getCompany/getContact throw on a 404 instead of returning null, so a
+        // bare falsy check never fires — the throw escapes to the generic tool
+        // error handler and the actionable message is lost. Classify: only a
+        // genuine not-found means the id is bogus. Any other failure rethrows,
+        // so an Autotask outage never gets reported as "no such company".
+        const idExists = async (kind: 'company' | 'contact', id: number): Promise<boolean> => {
+          try {
+            const rec = kind === 'company' ? await s.getCompany(id) : await s.getContact(id);
+            return !!rec;
+          } catch (err) {
+            if (isNotFoundError(err)) return false;
+            throw err;
+          }
+        };
+
         if (r.length === 0) {
           if (companyID !== undefined) {
-            const co = await s.getCompany(Number(companyID));
-            if (!co) {
+            if (!(await idExists('company', Number(companyID)))) {
               return {
                 result: { status: 'unknown_company', companyID },
                 message: `No company exists with id ${companyID}, so this search established nothing about their tickets. Do not tell the caller they have no tickets. If this id came from caller context it is a contactID, not a companyID — retry with contactID: ${companyID}.`,
@@ -399,8 +413,7 @@ export class AutotaskToolHandler {
             }
           }
           if (contactID !== undefined) {
-            const ct = await s.getContact(Number(contactID));
-            if (!ct) {
+            if (!(await idExists('contact', Number(contactID)))) {
               return {
                 result: { status: 'unknown_contact', contactID },
                 message: `No contact exists with id ${contactID}, so this search established nothing about their tickets. Do not tell the caller they have no tickets.`,
