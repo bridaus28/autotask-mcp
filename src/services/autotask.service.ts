@@ -32,6 +32,45 @@ import { Logger } from '../utils/logger';
 import { FieldInfo, PicklistValue } from './picklist.cache';
 import { buildPhoneCandidateSearch, isExactPhoneMatch } from '../utils/phone';
 
+/**
+ * Decide the ticket-query window and page size. Pure; no I/O.
+ *
+ * Extracted from searchTickets so the MCP layer can report the SAME effective
+ * page size the query actually used. Previously the response summary reported
+ * `args.pageSize || 25`, which is the value the CALLER supplied — undefined for
+ * every Ivy call — while the query itself ran at 500. Result: a company-scoped
+ * search that returned the complete 90-day set still reported
+ * `pageSize: 25, hasMore: true` (observed: returned 74, pageSize 25, hasMore
+ * true), telling the consumer to paginate for records that do not exist.
+ *
+ * Window: default to last 90 days when the caller filters by company/contact
+ * without any date range. Autotask /query has no server-side sort and returns
+ * oldest-first by internal id — without this default the model has to paginate
+ * through years of history to find recent tickets. searchTerm (ticket-number
+ * lookup) is exempt; that path must find a single ticket regardless of age.
+ * No-filter calls are exempt; there is no safe default without an identity
+ * anchor.
+ *
+ * Page size: API max (500) whenever the 90d default applies, so high-volume
+ * companies fit in one response (Sunseri's Bar LLC ~100 tickets/90d, typical
+ * managed customer < 25). Caller can still override smaller.
+ */
+export function resolveTicketQuery(
+  options: AutotaskQueryOptionsExtended
+): { lastActivityAfter?: string; pageSize: number } {
+  const hasDateFilter = !!(options.createdAfter || options.createdBefore || options.lastActivityAfter);
+  const hasIdentityFilter = options.companyId !== undefined || options.contactID !== undefined;
+  const hasSearchTerm = !!options.searchTerm;
+
+  let lastActivityAfter = options.lastActivityAfter;
+  if (!hasDateFilter && hasIdentityFilter && !hasSearchTerm) {
+    lastActivityAfter = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  const pageSize = Math.min(options.pageSize || (lastActivityAfter ? 500 : 25), 500);
+  return { ...(lastActivityAfter && { lastActivityAfter }), pageSize };
+}
+
 export class AutotaskService {
   private client: AutotaskClient | null = null;
   private logger: Logger;
@@ -450,20 +489,10 @@ export class AutotaskService {
     try {
       this.logger.debug('Searching tickets with options:', options);
 
-      // Default to last 90 days when caller filters by company/contact without
-      // specifying any date range. Autotask /query has no server-side sort and
-      // returns oldest-first by internal id — without this default the model
-      // has to paginate through years of history to find recent tickets.
-      // searchTerm (ticket-number lookup) is exempt; that path must find a
-      // single ticket regardless of age. No-filter calls are also exempt;
-      // there is no safe default without an identity anchor.
-      const hasDateFilter = !!(options.createdAfter || options.createdBefore || options.lastActivityAfter);
-      const hasIdentityFilter = options.companyId !== undefined || options.contactID !== undefined;
-      const hasSearchTerm = !!options.searchTerm;
-      if (!hasDateFilter && hasIdentityFilter && !hasSearchTerm) {
-        const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-        options.lastActivityAfter = ninetyDaysAgo;
-      }
+      // Window + page size are decided by resolveTicketQuery (exported above) so
+      // the MCP layer can report the SAME effective pageSize it actually used.
+      const resolved = resolveTicketQuery(options);
+      if (resolved.lastActivityAfter) options.lastActivityAfter = resolved.lastActivityAfter;
 
       const filters: any[] = [];
 
@@ -536,13 +565,7 @@ export class AutotaskService {
         });
       }
 
-      // Bump default pageSize to API max (500) when applying the 90d default
-      // so high-volume companies fit in one response — Autotask returns ASC by
-      // internal id, so a smaller pageSize would put oldest tickets on page 1
-      // and bury the newest. 500 covers virtually every company's 90d activity
-      // (Sunseri's Bar LLC ~ 100 tickets/90d, typical managed customer < 25).
-      // Caller can still override smaller.
-      const pageSize = Math.min(options.pageSize || (options.lastActivityAfter ? 500 : 25), 500);
+      const pageSize = resolved.pageSize;
       const queryOptions: any = {
         filter: filters,
         pageSize,

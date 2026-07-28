@@ -2,7 +2,7 @@
 // Handles MCP tool calls for Autotask operations (search, create, update)
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { AutotaskService } from '../services/autotask.service.js';
+import { AutotaskService, resolveTicketQuery } from '../services/autotask.service.js';
 import { PicklistCache, PicklistValue } from '../services/picklist.cache.js';
 import { Logger } from '../utils/logger.js';
 import { formatCompactResponse, detectEntityType, COMPACT_SEARCH_TOOLS } from '../utils/response.formatter.js';
@@ -275,9 +275,9 @@ export class AutotaskToolHandler {
   /**
    * Dispatch table: maps tool names to handler functions
    */
-  private getDispatchTable(): Map<string, (args: any) => Promise<{ result: any; message: string; hint?: string }>> {
+  private getDispatchTable(): Map<string, (args: any) => Promise<{ result: any; message: string; hint?: string; effectivePageSize?: number }>> {
     const s = this.autotaskService;
-    type H = (args: any) => Promise<{ result: any; message: string; hint?: string }>;
+    type H = (args: any) => Promise<{ result: any; message: string; hint?: string; effectivePageSize?: number }>;
     return new Map<string, H>([
       // Connection
       ['think', async () => {
@@ -368,8 +368,47 @@ export class AutotaskToolHandler {
           ...(companyID !== undefined && { companyId: companyID }),
           ...(contactID !== undefined && { contactID }),
         };
+        // Report the page size the query ACTUALLY used, not the one the caller
+        // supplied (usually nothing). See resolveTicketQuery.
+        const effectivePageSize = resolveTicketQuery(opts).pageSize;
         const r = await s.searchTickets(opts);
-        return { result: r, message: `Found ${r.length} tickets` };
+
+        // An empty scoped result is ambiguous, and the two cases are not the
+        // same fact: either this company/contact has no tickets in the window,
+        // or the id never identified a record at all. Autotask /query returns an
+        // empty set for a filter on a non-existent id, so passing that through
+        // as "0 tickets" asserts something about the world that was never
+        // established. Same defect class as lookup_tech_status conflating
+        // no-match with unavailable (7cd6222): report a fact about the RESULT
+        // and let the consumer decide. Costs one extra read, on the miss path
+        // only.
+        //
+        // Observed 2026-07-27: 7 of 12 ticket searches passed a contactID in the
+        // companyID slot (caller_context supplied no companyID on the
+        // ambiguous_multi_company branch). All returned 0. On conv_...3kmpgy1bdp
+        // the caller was told "I don't see any open tickets for Consolidated
+        // Services" three times; she had three, and the real companyID was 822.
+        if (r.length === 0) {
+          if (companyID !== undefined) {
+            const co = await s.getCompany(Number(companyID));
+            if (!co) {
+              return {
+                result: { status: 'unknown_company', companyID },
+                message: `No company exists with id ${companyID}, so this search established nothing about their tickets. Do not tell the caller they have no tickets. If this id came from caller context it is a contactID, not a companyID — retry with contactID: ${companyID}.`,
+              };
+            }
+          }
+          if (contactID !== undefined) {
+            const ct = await s.getContact(Number(contactID));
+            if (!ct) {
+              return {
+                result: { status: 'unknown_contact', contactID },
+                message: `No contact exists with id ${contactID}, so this search established nothing about their tickets. Do not tell the caller they have no tickets.`,
+              };
+            }
+          }
+        }
+        return { result: r, message: `Found ${r.length} tickets`, effectivePageSize };
       }],
       ['autotask_get_ticket_details', async (a) => {
         const r = await s.getTicket(a.ticketID, a.fullDetails); return { result: r, message: 'Ticket details retrieved successfully' };
@@ -734,7 +773,7 @@ export class AutotaskToolHandler {
       const handler = this.getDispatchTable().get(name);
       if (!handler) throw new Error(`Unknown tool: ${name}`);
 
-      const { result, message, hint } = await handler(args);
+      const { result, message, hint, effectivePageSize } = await handler(args);
 
       // Skip name resolution for tools where it would cause unnecessary API calls
       // without providing value. Contact tools return IDs that Ivy uses directly.
@@ -748,7 +787,10 @@ export class AutotaskToolHandler {
         if (entityType) {
           const compact = formatCompactResponse(result, entityType, {
             page: args.page,
-            pageSize: args.pageSize,
+            // effectivePageSize is what the query ran at; args.pageSize is only
+            // what the caller asked for. hasMore is derived from this, so using
+            // the request value made a complete result set claim more existed.
+            pageSize: effectivePageSize ?? args.pageSize,
             ...(hint !== undefined && { hint }),
           });
           if (!skipEnhancement) {
