@@ -71,7 +71,33 @@ export function matchSpokenName(
       .map(c => ({ c, d: score(last, c, 'last') }))
       .filter(x => x.d <= threshold(last))
       .sort((a, b) => a.d - b.d);
-    if (lastMatches.length === 0) return { status: 'new_contact' };
+    if (lastMatches.length === 0) {
+      // The last name is the primary key, but it is also the token STT destroys
+      // most often, and unlike a first name there is no second channel behind it.
+      // "Tom Daus" heard as "Tom Dev" is 3 edits on a 3-char token: unrecoverable
+      // by threshold, and it used to return new_contact on that one bad token
+      // alone -- the first name was never consulted. Net effect: supplying a
+      // mangled last name left the caller WORSE off than supplying none, because
+      // the first-name-only branch below would have locked "Tom" exactly.
+      // (conv_5801kymnf5rsemprgwbn43vxpacp, 2026-07-28: Tom Daus, a contact on
+      // file since March at a Silver Managed client, was told he was not listed.)
+      //
+      // A miss here is evidence that this channel failed, not evidence the person
+      // is new. Fall through to the first name.
+      //
+      // Deliberately NOT a lock, even on a unique exact first name: the caller DID
+      // give a last name and it did not match, which is equally consistent with a
+      // genuinely new person who happens to share a first name with someone on
+      // file. 'candidates' makes the agent confirm ("I have a Tom on file -- is
+      // your last name Daus?") and lock again; 'new_contact' makes her assert.
+      // Precedent for not locking on a first name against contrary evidence:
+      // Tanya -> Tony Whetstone, 2026-06-15.
+      if (first) {
+        const exactFirst = pool.filter(c => score(first, c, 'all') === 0);
+        if (exactFirst.length >= 1) return { status: 'candidates', count: exactFirst.length };
+      }
+      return { status: 'new_contact' };
+    }
     const best = lastMatches.filter(x => x.d === lastMatches[0].d);
     if (best.length === 1) {
       const c = best[0].c;
