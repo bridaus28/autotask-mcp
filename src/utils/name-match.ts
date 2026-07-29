@@ -9,6 +9,19 @@ export interface PoolContact {
   id: number;
   firstName?: string | null;
   lastName?: string | null;
+  /**
+   * Nickname / goes-by. CV convention 2026-07-29: stored in Autotask's
+   * middleInitial, which is unused here and is string(50) despite its name.
+   * Matched as an alternative FIRST name, never as a surname.
+   *
+   * Why this field is needed at all: nicknames are not spelling variants and
+   * edit distance cannot reach them -- alex->alejandro is 6 edits against a
+   * threshold of 1, sandy->cassandra is 5 against 2. Two duplicate contacts
+   * were created this way (Sandy/Unknown at Cal Blend Soils 2026-06-30,
+   * Alex Menz at Covina Arthritis 2026-07-29). No threshold tuning fixes it;
+   * the record has to carry the name the caller actually uses.
+   */
+  middleInitial?: string | null;
   companyID?: number | null;
   primaryContact?: boolean | null;
 }
@@ -59,7 +72,11 @@ export function matchSpokenName(
 
   const score = (spoken: string, c: PoolContact, fields: 'last' | 'all') => {
     const lastToks = tokens(c.lastName);
-    const allToks = [...tokens(c.firstName), ...lastToks];
+    // The nickname joins the first-name tokens, not the surname tokens: a
+    // goes-by name is an alternative to the given name. Keeping it out of
+    // lastToks matters because the last name is the primary key -- a nickname
+    // must never be able to satisfy a surname match.
+    const allToks = [...tokens(c.firstName), ...tokens(c.middleInitial), ...lastToks];
     return nameDistance(spoken, fields === 'last' ? (lastToks.length ? lastToks : allToks) : allToks);
   };
 

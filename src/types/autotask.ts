@@ -25,6 +25,11 @@ export interface AutotaskContact {
   companyID?: number;
   firstName?: string;
   lastName?: string;
+  // Nickname / goes-by, per the CV convention (2026-07-29). Autotask has no
+  // preferred-name field; middleInitial is unused here and is string(50) per
+  // the REST docs despite the name. firstName is string(20) and is synced with
+  // Azure AD, so it is not available for this.
+  middleInitial?: string | null;
   emailAddress?: string;
   phone?: string;
   title?: string;

@@ -24,7 +24,9 @@ export interface CompactResponse {
 const SUMMARY_FIELDS: Record<EntityType, string[]> = {
   tickets: ['id', 'ticketNumber', 'title', 'status', 'priority', 'companyID', 'assignedResourceID', 'createDate', 'dueDateTime'],
   companies: ['id', 'companyName', 'isActive', 'phone', 'city', 'state'],
-  contacts: ['id', 'firstName', 'lastName', 'emailAddress', 'companyID'],
+  // middleInitial carries the nickname under the CV convention (2026-07-29);
+  // without it here a contact search cannot show what the caller goes by.
+  contacts: ['id', 'firstName', 'middleInitial', 'lastName', 'emailAddress', 'companyID'],
   projects: ['id', 'projectName', 'status', 'companyID', 'projectLeadResourceID', 'startDate', 'endDate'],
   tasks: ['id', 'title', 'status', 'projectID', 'assignedResourceID', 'percentComplete'],
   resources: ['id', 'firstName', 'lastName', 'email', 'isActive', 'title', 'officeExtension'],
