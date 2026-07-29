@@ -479,8 +479,16 @@ export class AutotaskMcpServer {
               return;
             }
 
+            // Emit the same verdict shape as the spoken-name path. Without a
+            // status field this response matched nothing in the Identity SOP's
+            // "LOCK AND ACT ON THE VERDICT" table, so a successful contact_id
+            // lock did not look like a lock -- one more reason this path went
+            // unused on the ambiguous_company branch it is the only cure for.
+            // match: 'id' rather than 'exact'/'fuzzy'; no name matching happened.
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
+              status: 'locked',
+              match: 'id',
               contact_id: contact.id ?? contactId,
               company_id: contact.companyID ?? null,
               first_name: contact.firstName ?? null,
