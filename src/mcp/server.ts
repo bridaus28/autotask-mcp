@@ -421,6 +421,11 @@ export class AutotaskMcpServer {
                     company_id: c.companyID ?? companyID,
                     first_name: c.firstName ?? null,
                     last_name: c.lastName ?? null,
+                    // Nickname the caller may actually go by (CV convention:
+                    // Autotask middleInitial). Returned separately so the agent
+                    // speaks a clean first name instead of reading a combined
+                    // "Cassandra (Sandy)" string aloud.
+                    goes_by: (c as any).middleInitial || null,
                     is_primary: (c as any).primaryContact ?? false,
                   }));
                   return;
@@ -493,6 +498,7 @@ export class AutotaskMcpServer {
               company_id: contact.companyID ?? null,
               first_name: contact.firstName ?? null,
               last_name: contact.lastName ?? null,
+              goes_by: (contact as any).middleInitial || null,
               is_primary: contact.primaryContact ?? false,
             }));
           } catch (err) {
