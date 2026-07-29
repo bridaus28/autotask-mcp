@@ -390,8 +390,21 @@ export class AutotaskMcpServer {
                   return;
                 }
                 if (companyIds.length > 1) {
+                  // A spoken name CANNOT resolve this branch, and the old guidance
+                  // ("proceed per the Identity SOP ambiguous flow") did not say so.
+                  // Measured 2026-07-28: on both ambiguous phones seen that day every
+                  // candidate company held the SAME person -- Gabe Nakash at 4728 and
+                  // 761; Carol McAloney at 437, 1322 and 6225. Name matching across
+                  // the pool is therefore useless here by construction, which is why
+                  // this returns before matchSpokenName rather than after it.
+                  // Only the caller's answer about WHICH company discriminates, and the
+                  // only way to act on that answer is a contact_id lock. Say that.
                   res.writeHead(200, { 'Content-Type': 'application/json' });
-                  res.end(JSON.stringify({ status: 'ambiguous_company', guidance: 'Phone maps to multiple companies. Proceed per the Identity SOP ambiguous flow.' }));
+                  res.end(JSON.stringify({
+                    status: 'ambiguous_company',
+                    company_count: companyIds.length,
+                    guidance: 'This phone is on file at more than one company and the same person may be on file at each, so no spoken name can resolve it. Ask which company the caller is calling for, match their answer silently against the candidates in caller_context, then call this tool AGAIN with that candidate contact_id (not a spoken name). Never name a candidate aloud. Two attempts, then UNVERIFIED INTAKE.',
+                  }));
                   return;
                 }
                 const companyID = companyIds[0];
