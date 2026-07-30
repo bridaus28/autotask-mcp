@@ -25,6 +25,7 @@ import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
 import { matchSpokenName, PoolContact } from '../utils/name-match.js';
+import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
 // ─── Tenant constants shared by /phone-lookup and /call-closure ───────────────
@@ -374,8 +375,9 @@ export class AutotaskMcpServer {
             // standard search flow. The contact_id path below is unchanged.
             const spokenFirst = String(parsed.spoken_first || '').trim();
             const spokenLast = String(parsed.spoken_last || '').trim();
+            const spokenCompany = String(parsed.spoken_company || '').trim();
             const callerPhone = String(parsed.caller_phone || '').trim();
-            if (!parsed.contact_id && (spokenFirst || spokenLast)) {
+            if (!parsed.contact_id && (spokenFirst || spokenLast || spokenCompany)) {
               try {
                 if (!callerPhone) {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -390,6 +392,67 @@ export class AutotaskMcpServer {
                   return;
                 }
                 if (companyIds.length > 1) {
+                  // The caller has answered "what company are you calling for?".
+                  // Match it here so the candidate names never have to be sent to
+                  // the agent -- she cannot read out a list she was never given.
+                  // See company-match.ts for the disclosure measurements.
+                  if (spokenCompany) {
+                    const byCompany = new Map<number, { name: string | null; classification: string | null }>();
+                    await Promise.all([...new Set(companyIds)].map(async (cid) => {
+                      try {
+                        const co = await this.autotaskService.getCompany(cid);
+                        if (!co) return;
+                        let label: string | null = null;
+                        try {
+                          const vals = await this.picklistCache.getPicklistValues('Companies', 'classification');
+                          label = vals.find(v => String(v.value) === String((co as any).classification))?.label ?? null;
+                        } catch { /* classification is optional for matching */ }
+                        byCompany.set(cid, { name: co.companyName ?? null, classification: label });
+                      } catch { /* a candidate we cannot name simply cannot be matched */ }
+                    }));
+                    const candidates: CompanyCandidate[] = (phoneContacts || []).map((c: any) => ({
+                      contactId: c.id,
+                      companyId: c.companyID ?? null,
+                      companyName: c.companyID != null ? (byCompany.get(c.companyID)?.name ?? null) : null,
+                      classification: c.companyID != null ? (byCompany.get(c.companyID)?.classification ?? null) : null,
+                      primaryContact: c.primaryContact ?? false,
+                    }));
+                    const cv = matchSpokenCompany(candidates, spokenCompany);
+                    if (cv.status === 'locked') {
+                      const cand = cv.candidate;
+                      const full = (phoneContacts || []).find((c: any) => c.id === cand.contactId) as any;
+                      this.logger.info('Contact lock: resolved ambiguous company from spoken answer', {
+                        spokenCompany, via: cv.via, contactId: cand.contactId, companyId: cand.companyId,
+                      });
+                      res.writeHead(200, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({
+                        status: 'locked',
+                        match: `company_${cv.via}`,
+                        contact_id: cand.contactId,
+                        company_id: cand.companyId,
+                        first_name: full?.firstName ?? null,
+                        last_name: full?.lastName ?? null,
+                        goes_by: full?.middleInitial || null,
+                        is_primary: full?.primaryContact ?? false,
+                      }));
+                      return;
+                    }
+                    if (cv.status === 'ambiguous_residential') {
+                      res.writeHead(200, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({
+                        status: 'ambiguous_residential',
+                        count: cv.count,
+                        guidance: 'This caller has more than one personal account on file, so "not a company" cannot pick one. Do not list them and do not ask again. Move on: help the caller with what they actually called about, then handle the call as UNVERIFIED INTAKE on companyID 0 and note that their personal accounts need merging. This is a records problem, not the caller\'s problem, and they should not notice it.',
+                      }));
+                      return;
+                    }
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                      status: 'company_no_match',
+                      guidance: 'That answer does not match any company on file for this phone. Ask once more for the full company name, or "not a company" if it is personal, and call again with spoken_company. Never name, guess or list a company yourself. If the second attempt also fails, STOP asking about identity: acknowledge it briefly and warmly, carry on with what the caller needs, and handle the call as UNVERIFIED INTAKE on companyID 0. A caller you cannot place still gets answered, transferred, or a message taken. Never leave someone stuck on identity, and never offer to set up a new account for a caller whose company you merely failed to match.',
+                    }));
+                    return;
+                  }
                   // A spoken name CANNOT resolve this branch, and the old guidance
                   // ("proceed per the Identity SOP ambiguous flow") did not say so.
                   // Measured 2026-07-28: on both ambiguous phones seen that day every
@@ -403,7 +466,7 @@ export class AutotaskMcpServer {
                   res.end(JSON.stringify({
                     status: 'ambiguous_company',
                     company_count: companyIds.length,
-                    guidance: 'This phone is on file at more than one company and the same person may be on file at each, so no spoken name can resolve it. Ask which company the caller is calling for, match their answer silently against the candidates in caller_context, then call this tool AGAIN with that candidate contact_id (not a spoken name). Never name a candidate aloud. Two attempts, then UNVERIFIED INTAKE.',
+                    guidance: 'This phone is on file at more than one company, so no spoken name can resolve it. Ask the caller: "What company are you calling for?" then call this tool AGAIN passing their answer verbatim as spoken_company. The server matches it; you are not given the candidate names and must never guess or offer one. If the caller says it is personal, pass that answer through too. Two attempts maximum, then stop asking, help them anyway, and record it as UNVERIFIED INTAKE on companyID 0.',
                   }));
                   return;
                 }
