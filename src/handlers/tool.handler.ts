@@ -307,6 +307,19 @@ export class AutotaskToolHandler {
             }
           }
         }
+        // An empty array reads as "this company is not a customer", and that is not
+        // what a zero-result substring search establishes. Measured 06-24..07-30:
+        // 32 of 85 company searches returned zero, and on 07-30 one of them turned a
+        // managed client into an offer to open a new account (conv_...0v9svxdnyryx,
+        // "Sunseri's" transcribed "Sunfuries"). Report the fact instead. Deliberately
+        // carries NO receptionist policy -- what to do about a no_match is the
+        // consumer's decision and lives in the KB.
+        if (r.length === 0 && term.length > 0) {
+          return {
+            result: { status: 'no_match', searchTerm: term, matchType: 'substring' },
+            message: `No company name contains "${term}". This is a literal substring match, not a fuzzy one, so a misspelling or a partial word returns zero even when the company exists. A corrected spelling or a different distinctive word from the name may succeed.`,
+          };
+        }
         return { result: r, message: `Found ${r.length} companies`, hint };
       }],
       ['autotask_create_company', async (a) => {

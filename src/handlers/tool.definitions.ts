@@ -61,7 +61,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         searchTerm: {
           type: 'string',
-          description: 'A SINGLE distinctive word from the company name (e.g. \'Conditioning\', not \'Advanced Air Conditioning\'). Contains match against companyName only: multi-word strings must appear verbatim in the name and usually return zero. Do not pass phone numbers, addresses, or other non-name values here.'
+          description: 'The company name in full, as you have it. Do not pre-reduce it to a single word: matching is a literal contains match against companyName only, and when a multi-word term returns zero the server automatically retries with the distinctive words from it and flags the result with a hint. Pre-shortening the term discards that retry. Do not pass phone numbers, addresses, or other non-name values here.'
         },
         isActive: {
           type: 'boolean',
