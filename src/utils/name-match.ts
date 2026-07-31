@@ -89,31 +89,33 @@ export function matchSpokenName(
       .filter(x => x.d <= threshold(last))
       .sort((a, b) => a.d - b.d);
     if (lastMatches.length === 0) {
-      // The last name is the primary key, but it is also the token STT destroys
-      // most often, and unlike a first name there is no second channel behind it.
-      // "Tom Daus" heard as "Tom Dev" is 3 edits on a 3-char token: unrecoverable
-      // by threshold, and it used to return new_contact on that one bad token
-      // alone -- the first name was never consulted. Net effect: supplying a
-      // mangled last name left the caller WORSE off than supplying none, because
-      // the first-name-only branch below would have locked "Tom" exactly.
-      // (conv_5801kymnf5rsemprgwbn43vxpacp, 2026-07-28: Tom Daus, a contact on
-      // file since March at a Silver Managed client, was told he was not listed.)
+      // A surname that matches nothing is evidence that this channel failed, not
+      // evidence the person is new. It fails two ways and both used to assert
+      // new_contact on one bad token while the first name was never consulted:
       //
-      // A miss here is evidence that this channel failed, not evidence the person
-      // is new. Fall through to the first name.
+      //   mangled by STT   "Tom Daus" heard as "Tom Dev" -- 3 edits on a 3-char
+      //                    token, unrecoverable by threshold.
+      //                    (conv_5801kymnf5rsemprgwbn43vxpacp, 2026-07-28: a
+      //                    contact on file since March told he was not listed.)
+      //   not a surname    "Kristin at CalBlind Soils" -- the model puts the
+      //                    company phrase in the surname slot. 10 of 385 lock
+      //                    calls to 2026-07-31 do this; 4 returned new_contact.
+      //                    (conv_...2mw8x1qb0sp9, 2026-07-31: duplicated Kristen
+      //                    Dabela as "Kristin Dabela" at Cal Blend Soils.)
       //
-      // Deliberately NOT a lock, even on a unique exact first name: the caller DID
-      // give a last name and it did not match, which is equally consistent with a
-      // genuinely new person who happens to share a first name with someone on
-      // file. 'candidates' makes the agent confirm ("I have a Tom on file -- is
-      // your last name Daus?") and lock again; 'new_contact' makes her assert.
-      // Precedent for not locking on a first name against contrary evidence:
-      // Tanya -> Tony Whetstone, 2026-06-15.
-      if (first) {
-        const exactFirst = pool.filter(c => score(first, c, 'all') === 0);
-        if (exactFirst.length >= 1) return { status: 'candidates', count: exactFirst.length };
-      }
-      return { status: 'new_contact' };
+      // Both are the same fact -- this token is not usable -- so drop it and reuse
+      // the first-name-only path below rather than keeping a second, weaker copy
+      // of that logic here. No parsing of company phrases is needed: a phrase that
+      // is not a surname simply matches no surname, which lands right here.
+      if (!first) return { status: 'new_contact' };
+      const viaFirst = matchSpokenName(pool, first, null);
+      // Never lock, even on a unique exact first name. The caller DID give a
+      // surname and it did not match, which is equally consistent with someone
+      // genuinely new who shares a first name with a contact on file. 'candidates'
+      // makes her confirm ("I have a Tom on file -- is your last name Daus?");
+      // 'locked' would make her assert. Precedent for not locking on a first name
+      // against contrary evidence: Tanya -> Tony Whetstone, 2026-06-15.
+      return viaFirst.status === 'locked' ? { status: 'candidates', count: 1 } : viaFirst;
     }
     const best = lastMatches.filter(x => x.d === lastMatches[0].d);
     if (best.length === 1) {
