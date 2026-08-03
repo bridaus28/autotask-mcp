@@ -295,12 +295,20 @@ export class AutotaskToolHandler {
           const r = await s.getCompany(a.id);
           return { result: { company: r }, message: 'Company retrieved successfully' };
         }
-        let r = await s.searchCompanies(a);
+        // Active-only unless explicitly asked otherwise. An inactive company is a
+        // historical record and offering one as a match is worse than finding nothing:
+        // 2026-08-03 07:09 a search for "IDW" returned active 706 "Innovative
+        // DisplayWorks Inc. (IDW)" AND inactive 5131 "IDW", and both names plus both
+        // account statuses were read aloud to a caller who was not yet identified.
+        // Verified against live Autotask 2026-08-03: isActive true returns 11 of the 15
+        // "Miller" rows, false returns the other 4, so the filter is applied in the query.
+        const activeOnly = { ...a, isActive: a.isActive ?? true };
+        let r = await s.searchCompanies(activeOnly);
         let hint: string | undefined;
         const term = typeof a.searchTerm === 'string' ? a.searchTerm.trim() : '';
         if (r.length === 0 && term.length > 0 && /\s/.test(term)) {
           for (const token of companyFallbackTokens(term)) {
-            r = await s.searchCompanies({ ...a, searchTerm: token });
+            r = await s.searchCompanies({ ...activeOnly, searchTerm: token });
             if (r.length > 0) {
               hint = `0 results for "${term}"; matched on fallback token "${token}". Confirm against the caller-stated company name before use.`;
               break;
