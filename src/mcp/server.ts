@@ -377,8 +377,74 @@ export class AutotaskMcpServer {
             const spokenLast = String(parsed.spoken_last || '').trim();
             const spokenCompany = String(parsed.spoken_company || '').trim();
             const callerPhone = String(parsed.caller_phone || '').trim();
-            if (!parsed.contact_id && (spokenFirst || spokenLast || spokenCompany)) {
+            if (!parsed.contact_id && (spokenFirst || spokenLast || spokenCompany || parsed.company_id)) {
               try {
+                // A company already resolved on this call -- a search result, or the
+                // prelock -- can enter the identity step directly. Without this the
+                // company came from caller_phone and nothing else, and spoken_company
+                // only picked among candidates the phone had already produced, so an
+                // unknown phone was a dead end regardless of what was already known.
+                // 2026-08-03 07:09: one turn after search_companies returned active
+                // company 706 "Innovative DisplayWorks Inc. (IDW)", this endpoint
+                // answered no_record and company 6866 was created as a duplicate of it.
+                // The aim is to make the correct move the available one.
+                // A company already resolved on this call -- a search result, or the
+                // prelock -- can enter the identity step directly. Two guards below.
+                //
+                // Why this exists: the company was derived from caller_phone and nothing
+                // else. spoken_company only picked among candidates the phone had already
+                // produced, so it could never introduce a company the phone had not found.
+                // An unknown phone was therefore a dead end no matter what was known.
+                //
+                // The KB has been asking for this all along. Identity SOP L79, on the
+                // no_record branch, says to search the company and "lock it" -- an
+                // instruction no tool could carry out. 2026-08-03 07:09: search_companies
+                // returned active company 706 "Innovative DisplayWorks Inc. (IDW)", the
+                // caller confirmed it, and with nothing that would accept 706 the call
+                // ended in company 6866 as a duplicate. This makes L79 executable.
+                const rawCompanyId = parsed.company_id;
+                const knownCompanyID = parseInt(String(rawCompanyId ?? ''), 10);
+                // Guard 1: range. Companies in this tenant are 3-4 digit ids (observed
+                // 174..6866); contacts are 8-digit (30,6xx,xxx+). A value that large is a
+                // contactID misrouted into this slot, and honouring it would pool contacts
+                // for a company that does not exist and report new_contact against it.
+                // Mirrors the contact_id range guard below. Falls through rather than
+                // erroring, so a bad value degrades to the existing phone behaviour.
+                // Guard 2: a spoken name is required. company_id alone would hand
+                // matchSpokenName no name at all, whose documented answer for that case is
+                // candidates = the whole pool: 151 for company 706. Useless, so skip it.
+                const companyIdUsable = Number.isFinite(knownCompanyID)
+                  && knownCompanyID > 0
+                  && knownCompanyID < 1000000
+                  && Boolean(spokenFirst || spokenLast);
+                if (rawCompanyId != null && String(rawCompanyId).trim() !== '' && !companyIdUsable) {
+                  this.logger.info('Contact lock: company_id supplied but not usable; falling back to phone', {
+                    company_id: rawCompanyId, hasSpokenName: Boolean(spokenFirst || spokenLast),
+                  });
+                }
+                if (companyIdUsable) {
+                  const pool = await this.autotaskService.searchContacts({ companyID: knownCompanyID, pageSize: 200 } as any) as PoolContact[];
+                  const verdict = matchSpokenName(pool || [], spokenFirst, spokenLast);
+                  this.logger.info('Contact lock: resolved within a caller-supplied company', {
+                    company_id: knownCompanyID, poolSize: (pool || []).length, verdict: verdict.status,
+                  });
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  if (verdict.status === 'locked') {
+                    const c = verdict.contact;
+                    res.end(JSON.stringify({
+                      status: 'locked', match: verdict.match, contact_id: c.id,
+                      company_id: c.companyID ?? knownCompanyID,
+                      first_name: c.firstName ?? null, last_name: c.lastName ?? null,
+                      goes_by: (c as any).middleInitial || null,
+                      is_primary: (c as any).primaryContact ?? false,
+                    }));
+                  } else if (verdict.status === 'candidates') {
+                    res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID }));
+                  } else {
+                    res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID }));
+                  }
+                  return;
+                }
                 if (!callerPhone) {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   res.end(JSON.stringify({ status: 'no_verdict', guidance: 'caller_phone missing; proceed with the standard contact search flow.' }));
@@ -388,7 +454,17 @@ export class AutotaskMcpServer {
                 const companyIds = [...new Set((phoneContacts || []).map(c => c.companyID).filter((x): x is number => x != null))];
                 if (companyIds.length === 0) {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
-                  res.end(JSON.stringify({ status: 'no_record', guidance: 'No record for this phone. Proceed per the Identity SOP no_match flow.' }));
+                  // Reports what was checked and nothing else. This is a phone lookup:
+                  // spoken_company is only consulted in the branch below, when the phone
+                  // resolves to two or more companies, so on an unknown phone the caller's
+                  // answer to "what company are you calling for?" never reaches the matcher.
+                  // The previous text ("Proceed per the Identity SOP no_match flow") told the
+                  // consumer what to do, and on 2026-08-03 07:09 that instruction arrived one
+                  // turn after search_companies had already returned active company 706
+                  // "Innovative DisplayWorks Inc. (IDW)": she created 6866 as a duplicate.
+                  // What to do about an unknown phone is the consumer's policy, not this
+                  // endpoint's, so it is no longer stated here.
+                  res.end(JSON.stringify({ status: 'no_record', checked: 'caller_phone' }));
                   return;
                 }
                 if (companyIds.length > 1) {

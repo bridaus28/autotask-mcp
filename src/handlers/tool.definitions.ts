@@ -65,7 +65,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         isActive: {
           type: 'boolean',
-          description: 'Filter by active status. Omit to return both active and inactive companies.'
+          description: 'Omit this to search active companies only, which is the default and is what you want in nearly every case. Inactive companies do exist in this instance and are former or closed accounts; pass false to search those instead. There is no mode that returns both. An inactive company is history, not a match for a caller with a current need, so the one reason to reach for one is a caller asking to reactivate a former account.'
         },
         page: {
           type: 'number',
