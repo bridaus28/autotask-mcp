@@ -819,14 +819,14 @@ export class AutotaskToolHandler {
       if (COMPACT_SEARCH_TOOLS.has(name) && Array.isArray(result)) {
         const entityType = detectEntityType(name);
         if (entityType) {
-          const compact = formatCompactResponse(result, entityType, {
+          const compact = await formatCompactResponse(result, entityType, {
             page: args.page,
             // effectivePageSize is what the query ran at; args.pageSize is only
             // what the caller asked for. hasMore is derived from this, so using
             // the request value made a complete result set claim more existed.
             pageSize: effectivePageSize ?? args.pageSize,
             ...(hint !== undefined && { hint }),
-          });
+          }, (entity, field) => this.picklistCache.getPicklistValues(entity, field));
           if (!skipEnhancement) {
             compact.items = await this.enhanceItems(compact.items);
           }
