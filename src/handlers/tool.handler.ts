@@ -643,9 +643,40 @@ export class AutotaskToolHandler {
             const statuses = await this.picklistCache.getTicketStatuses();
             const cn = statuses.find(x => String(x.label).toLowerCase() === 'customer noted');
             const customerNotedId = cn ? parseInt(String(cn.value), 10) : null;
-            if (customerNotedId != null && CUSTOMER_NOTED_SOURCE_STATUSES.has(currentStatus as number)) {
+            const comp = statuses.find(x => String(x.label).toLowerCase() === 'complete');
+            const completeId = comp ? parseInt(String(comp.value), 10) : null;
+
+            // Complete was excluded from the allowlist above on the reasoning that
+            // "reopening is a deliberate act, not a side effect", assuming the KB's
+            // 7-day rule had her reopen via autotask_update_ticket first. She does that
+            // on 7% of notes (measured 2026-07-26, 28 notes, 2 follow-ups). So the note
+            // lands on a ticket nobody watches and the caller's request is lost:
+            //   2026-07-31  Linda Pulido, T20260623.0036, closed 38 days. She drove to
+            //               the shop on 08-03 because nobody called back.
+            //   2026-08-05  Jerry Orlanes, 57425, closed 12 days, a callback request.
+            // Brian 2026-08-05: reopen it. This reverses the 2026-07-26 decision.
+            //
+            // RMM Complete (20) stays excluded: closed by automation, not ours to reopen.
+            //
+            // Status is read here, at note time, deliberately. A ticket can close during
+            // the call: 57985 was noted at 11:14 and completed at 11:24, so it was open
+            // when she wrote and nothing should fire. Comparing calendar dates instead of
+            // the live status would have wrongly treated that as a note on closed work.
+            const wasComplete = completeId != null && currentStatus === completeId;
+
+            if (customerNotedId != null &&
+                (CUSTOMER_NOTED_SOURCE_STATUSES.has(currentStatus as number) || wasComplete)) {
               await s.updateTicket(a.ticketId, { status: customerNotedId });
-              statusMsg = ' Ticket status set to Customer Noted.';
+              if (wasComplete) {
+                statusMsg = ' This ticket was Complete; it has been reopened to Customer Noted.';
+                const done = (current as any)?.completedDate;
+                const days = done ? Math.floor((Date.now() - new Date(done).getTime()) / 86400000) : null;
+                if (days != null && days > 7) {
+                  statusMsg += ` It had been closed ${days} days. If this is a new issue rather than a continuation, open a new ticket and reference this one.`;
+                }
+              } else {
+                statusMsg = ' Ticket status set to Customer Noted.';
+              }
             }
           } catch (noteStatusErr) {
             this.logger.warn('Ticket note saved but status update to Customer Noted failed', {
