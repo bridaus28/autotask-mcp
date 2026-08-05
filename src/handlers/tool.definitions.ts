@@ -185,7 +185,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
       properties: {
         searchTerm: {
           type: 'string',
-          description: 'A single token to look up: pass last name only, OR first name only, OR email only. Contains-matched separately against firstName, lastName, and emailAddress — a combined "First Last" string (e.g. "Bruce Rideout") matches nothing because each field is checked alone. Do not use this for phone number lookups — use the phone parameter instead.'
+          description: 'A single token to look up: pass last name only, OR first name only, OR email only. Contains-matched separately against firstName, lastName, and emailAddress — a combined "First Last" string (e.g. "Firstname Lastname") matches nothing because each field is checked alone. Do not use this for phone number lookups — use the phone parameter instead.'
         },
         phone: {
           type: 'string',
