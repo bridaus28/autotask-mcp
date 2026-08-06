@@ -31,6 +31,7 @@ import { McpServerConfig } from '../types/mcp';
 import { Logger } from '../utils/logger';
 import { FieldInfo, PicklistValue } from './picklist.cache';
 import { buildPhoneCandidateSearch, isExactPhoneMatch } from '../utils/phone';
+export { isExactPhoneMatch };
 
 /**
  * True when an Autotask entity GET failed because the id is not a record, as
@@ -427,6 +428,62 @@ export class AutotaskService {
       this.logger.error('Failed to search contacts:', error);
       throw error;
     }
+  }
+
+  /**
+   * Exact-email lookup, used to catch duplicate contacts before one is created.
+   *
+   * Autotask's `eq` on emailAddress is case-insensitive — verified against the
+   * live API 2026-08-05, where 'kacctllc@gmail.com', 'Kacctllc@gmail.com' and
+   * 'KACCTLLC@GMAIL.COM' each returned the same two rows.
+   *
+   * Fails OPEN: a duplicate check must never be the reason a create fails.
+   */
+  async findActiveContactsByEmail(email: string): Promise<AutotaskContact[]> {
+    const value = (email || '').trim();
+    if (!value) return [];
+    try {
+      const client = await this.ensureClient();
+      const result = await client.contacts.list({
+        pageSize: 25,
+        filter: [
+          { op: 'eq', field: 'emailAddress', value },
+          { op: 'eq', field: 'isActive', value: 1 }
+        ]
+      } as any);
+      const contacts = (result.data as AutotaskContact[]) || [];
+      this.logger.info(`Duplicate-email lookup for ${value}: ${contacts.length} active match(es)`);
+      return contacts;
+    } catch (error) {
+      this.logger.warn('Duplicate-email lookup failed; proceeding as if no match', { error });
+      return [];
+    }
+  }
+
+  /**
+   * Does this company already hold at least one active contact?
+   *
+   * This is the line between "a brand-new account being opened on this call"
+   * -- residential or business, both come in this way -- where the company and
+   * its first contact are created seconds apart and there is nothing to expose,
+   * and "an existing customer whose data a new contact would unlock".
+   * Calibrated 2026-08-05 against the 32 contacts Ivy created in 30 days: it
+   * separates the 16 new-account creates from the 16 into existing accounts
+   * with no overlap.
+   *
+   * Throws rather than returning a default. The caller decides what an unknown
+   * answer means, and for an access check that must be "refuse".
+   */
+  async companyHasContacts(companyID: number): Promise<boolean> {
+    const client = await this.ensureClient();
+    const result = await client.contacts.list({
+      pageSize: 1,
+      filter: [
+        { op: 'eq', field: 'companyID', value: companyID },
+        { op: 'eq', field: 'isActive', value: 1 }
+      ]
+    } as any);
+    return (((result.data as AutotaskContact[]) || []).length > 0);
   }
 
   async createContact(contact: Partial<AutotaskContact>): Promise<number> {
