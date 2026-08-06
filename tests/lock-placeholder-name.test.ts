@@ -63,3 +63,27 @@ describe('lets real callers through', () => {
     expect(isPlaceholderSpokenName(null, undefined)).toBe(false);
   });
 });
+
+describe('the refusal gives her nothing to read out', () => {
+  // Brian, 2026-08-06: she did not just invent the name, she said it to the
+  // caller. These assert the shape of the response text, not the behaviour --
+  // the server cannot control what she says, only what she is handed.
+  const GUIDANCE = 'No name has been given on this call yet. Ask the caller who you are speaking with, then call this tool again with their answer. Nothing was looked up, so there is no result to tell them about.';
+
+  it('never echoes a submitted name', () => {
+    for (const n of ['John', 'Smith', 'Jane', 'Doe', 'Unknown']) {
+      expect(GUIDANCE.toLowerCase()).not.toContain(n.toLowerCase());
+    }
+  });
+
+  it('contains no negative-lookup phrasing she could narrate', () => {
+    for (const frame of ['not found', 'no contact', 'no record', "don't have",
+                         'do not have', 'placeholder', 'fake', 'invalid', 'not on file']) {
+      expect(GUIDANCE.toLowerCase()).not.toContain(frame);
+    }
+  });
+
+  it('says plainly that there is nothing to report', () => {
+    expect(GUIDANCE).toMatch(/no result to tell them about/);
+  });
+});

@@ -425,7 +425,25 @@ export class AutotaskMcpServer {
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
                 status: 'no_name_given',
-                guidance: 'That is a placeholder, not a name this caller gave you. You do not have their name yet. Ask who you are speaking with, in an open question, and call again with exactly what they say. Do not offer to add a contact and do not repeat the placeholder back to them.',
+                // Wording matters as much as the refusal. Brian, 2026-08-06:
+                // on the 10:18 call she did not just invent "John Smith", she
+                // said it out loud -- "I don't have a John Smith on file at Daus
+                // Technologies."
+                //
+                // She narrates negative identity lookups constantly: 95 agent
+                // turns across 76 calls since 07-23. Nearly all of it is good
+                // service ("I don't see you listed as a contact yet, shall I add
+                // you?" to someone who just gave their name), so the narration is
+                // not the defect and suppressing it would break the good case.
+                //
+                // The defect is an invented name acquiring a lookup result to
+                // narrate. So this response gives her nothing shaped like one: it
+                // does not echo the submitted name, does not say "not found", and
+                // does not use the word placeholder, because any of those can be
+                // read back to the caller as a finding. It states a fact about the
+                // call and the next action, and says outright that there is
+                // nothing to report -- which is more robust than forbidding it.
+                guidance: 'No name has been given on this call yet. Ask the caller who you are speaking with, then call this tool again with their answer. Nothing was looked up, so there is no result to tell them about.',
               }));
               return;
             }
