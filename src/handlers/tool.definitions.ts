@@ -230,7 +230,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_contact',
-    description: 'Create a new contact in Autotask under an existing company. companyID, firstName, and lastName are required. The contact\'s companyID must reference an active company — use autotask_search_companies to find valid company IDs. Receptionist flow: companyID 0 (the catch-all) is not a home for new contacts — for a new residential customer, create the residential company first (companyName "Lastname, Firstname" per COMPANY CREATION in kb_ivy_operations), then create the contact under it.',
+    description: 'Create a new contact in Autotask under an existing company. companyID, firstName, and lastName are required. For an account that already has contacts on file, always pass callerPhone; the server checks it against the account and will not add someone to a customer it does not match. If it refuses, open the ticket for the company with no contact attached and record who called \u2014 a technician attaches them afterwards. The contact\'s companyID must reference an active company — use autotask_search_companies to find valid company IDs. Receptionist flow: companyID 0 (the catch-all) is not a home for new contacts — for a new residential customer, create the residential company first (companyName "Lastname, Firstname" per COMPANY CREATION in kb_ivy_operations), then create the contact under it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -261,6 +261,10 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         description: {
           type: 'string',
           description: 'Free-text notes attached to the contact record. Used for provenance tags (e.g. "[Ivy auto-added 2026-05-26]") and other internal notes about how or when the contact was created.'
+        },
+        callerPhone: {
+          type: 'string',
+          description: 'The number this caller is dialling from, exactly as given by the system caller id for this conversation. Not the number the caller reads out. Required whenever the company already has contacts on file; without it the contact will not be created.'
         }
       },
       required: ['companyID', 'firstName', 'lastName']

@@ -2,12 +2,30 @@
 // Handles MCP tool calls for Autotask operations (search, create, update)
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { AutotaskService, resolveTicketQuery, isNotFoundError } from '../services/autotask.service.js';
+import { AutotaskService, resolveTicketQuery, isNotFoundError, isExactPhoneMatch } from '../services/autotask.service.js';
+import { matchSpokenName } from '../utils/name-match.js';
 import { PicklistCache, PicklistValue } from '../services/picklist.cache.js';
 import { Logger } from '../utils/logger.js';
 import { formatCompactResponse, detectEntityType, COMPACT_SEARCH_TOOLS } from '../utils/response.formatter.js';
 import { MappingService } from '../utils/mapping.service.js';
 import { TOOL_DEFINITIONS } from './tool.definitions.js';
+
+// ─── Email values that are NOT identity ──────────────────────────────────────
+// Sentinels used where a real address is unknown. Measured against live
+// Autotask 2026-08-05 over 10,226 contacts: noemail@contoso.com 2,222 rows,
+// noemail@computervillage.com 80, the literal 'unknown' 28, na@na.com 3.
+// Matching on these would collide almost every emailless create.
+const PLACEHOLDER_EMAILS = new Set<string>([
+  'noemail@contoso.com',
+  'noemail@computervillage.com',
+  'unknown',
+  'na@na.com',
+  'n/a',
+  'none',
+  'noemail',
+]);
+
+const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 // ─── Statuses a caller-visible note may advance to "Customer Noted" ───────────
 // ALLOWLIST, not a denylist. Ivy may only move a ticket to Customer Noted from a
@@ -361,6 +379,150 @@ export class AutotaskToolHandler {
         return { result: { contact: r }, message: 'Contact retrieved successfully' };
       }],
       ['autotask_create_contact', async (a) => {
+        // ══ ACCESS GATE ═══════════════════════════════════════════════════
+        // Creating a contact IS granting access. The pre-call webhook matches
+        // inbound calls on contact phone/mobilePhone, so a contact carrying the
+        // caller's number makes every future call from it read
+        // "Verified caller: <name> at <company>", and Ivy then discusses that
+        // company's open work.
+        //
+        // Measured 2026-08-05 over the 32 contacts Ivy created in 30 days: 29
+        // recorded the caller's own caller ID, and 9 of those went to an
+        // established company from a phone that was not on file at all. Five
+        // spot-checked against live Autotask are now active contacts at RD
+        // Rubber, All-Pro, Airey-Thompson, PJ Hilton and Inland Commercial. A
+        // caller only had to say a name and a company.
+        //
+        // Nothing said on a call proves affiliation. The one thing a caller
+        // cannot fabricate by talking is the number they are dialling from,
+        // because Twilio resolves it before Ivy speaks. So the gate hangs off
+        // that and nothing else. Brian's decision, 2026-08-05.
+        //
+        // Applies ONLY to companies that already hold a contact. A brand-new
+        // account being opened on this call -- residential OR business, both
+        // happen -- creates the company and its first contact seconds apart,
+        // has no existing data to expose, and is untouched. 16 of the 32.
+        //
+        // Note the one way round this is to create a DUPLICATE company and put
+        // the contact on that. It grants no access (the shadow account is
+        // empty, the real one is untouched), so it is a record-quality problem
+        // and not a security one -- tracked separately with the IDW and
+        // Salvador Pablo duplicates.
+        const targetCompanyID = a.companyID;
+        let established: boolean;
+        try {
+          established = await s.companyHasContacts(targetCompanyID);
+        } catch (err) {
+          // FAILS CLOSED. Every other guard in this file fails open because the
+          // worst case is a duplicate. Here the worst case is another
+          // customer's data, so an unknown answer refuses.
+          this.logger.error('Access gate could not determine company state; refusing', { err, targetCompanyID });
+          return {
+            result: { status: 'gate_unavailable', created: false },
+            message:
+              'Not created. The account could not be checked just now, so a contact ' +
+              'cannot be added to it. Open the ticket for the company without a contact ' +
+              'and record who called; a technician will attach them.',
+          };
+        }
+
+        if (established) {
+          const callerPhone = String(a.callerPhone ?? '').trim();
+          if (!callerPhone) {
+            this.logger.warn('Access gate: no callerPhone supplied for an established company', { targetCompanyID });
+            return {
+              result: { status: 'caller_phone_required', created: false },
+              message:
+                'Not created. This account already exists, so adding someone to it needs ' +
+                'the number the caller is dialling from. Call again with callerPhone set ' +
+                'to the caller ID for this conversation.',
+            };
+          }
+
+          let tiedHere = false;
+          try {
+            // Already on file at this company under this number: a second
+            // person on a shared line, or a record being re-made.
+            const tied = await s.searchContacts({ phone: callerPhone, isActive: 1, pageSize: 200 } as any);
+            tiedHere = tied.some((c: any) => c.companyID === targetCompanyID);
+            if (!tiedHere) {
+              // Or dialling in on the company's own main line.
+              const co: any = await s.getCompany(targetCompanyID);
+              tiedHere = isExactPhoneMatch(callerPhone, co?.phone);
+            }
+          } catch (err) {
+            this.logger.error('Access gate lookup failed; refusing', { err, targetCompanyID });
+            return {
+              result: { status: 'gate_unavailable', created: false },
+              message:
+                'Not created. The account could not be checked just now, so a contact ' +
+                'cannot be added to it. Open the ticket for the company without a contact ' +
+                'and record who called; a technician will attach them.',
+            };
+          }
+
+          if (!tiedHere) {
+            this.logger.warn('Access gate: caller number is not associated with the target account', {
+              targetCompanyID,
+            });
+            return {
+              result: { status: 'not_tied_to_company', created: false },
+              message:
+                'Not created. The number this caller is dialling from is not associated ' +
+                'with that account, so they cannot be added to it from a call. Open the ' +
+                'ticket for the company with no contact attached and record who called ' +
+                'and what they need; a technician will verify them and attach the contact.',
+            };
+          }
+        }
+
+        // ══ DUPLICATE CHECK ═══════════════════════════════════════════════
+        // Only reached once the gate has passed, so any match here is at an
+        // account this caller is already tied to. The name the caller gave is
+        // matched against whoever holds the address, using the same matcher the
+        // lock step uses — so Ivy is never handed a fact she did not already
+        // have and never has to ask anything.
+        const emailIn = String(a.emailAddress ?? '').trim();
+        const isIdentityEmail =
+          emailIn.length > 0 &&
+          !PLACEHOLDER_EMAILS.has(emailIn.toLowerCase()) &&
+          EMAIL_SHAPE.test(emailIn);
+
+        if (isIdentityEmail) {
+          let holders: any[] = [];
+          try {
+            holders = await s.findActiveContactsByEmail(emailIn);
+          } catch (err) {
+            this.logger.warn('Duplicate-email check errored; creating without it', { err });
+            holders = [];
+          }
+          if (holders.length > 0) {
+            const verdict = matchSpokenName(holders as any, a.firstName ?? null, a.lastName ?? null);
+            // One holder whose name is close but not conclusive is still that
+            // person: an exact email plus a near name is not coincidence.
+            // Unrelated names come back new_contact — the shared-mailbox case
+            // (staff@williamsobgyn.com is three people at one company).
+            const sibling =
+              verdict.status === 'locked' ? (verdict as any).contact
+              : (verdict.status === 'candidates' && holders.length === 1) ? holders[0]
+              : null;
+            if (sibling && sibling.companyID === targetCompanyID) {
+              this.logger.info('create_contact suppressed: already on file at this company', {
+                existing: sibling.id, targetCompanyID,
+              });
+              return {
+                result: { status: 'existing_contact', created: false, contactID: sibling.id },
+                message:
+                  `Not created. This person is already on file at this company as contact ` +
+                  `${sibling.id}. Use that contactID.`,
+              };
+            }
+          }
+        }
+
+        // callerPhone is a gate input, not a Contact field.
+        delete a.callerPhone;
+
         // No email provided: opt the contact out of email workflows so the record
         // matches what the Autotask UI requires for emailless contacts (the UI
         // enforces email OR the four opt-outs; the REST API enforces neither).
