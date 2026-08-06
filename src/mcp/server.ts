@@ -72,6 +72,14 @@ const PLACEHOLDER_PAIRS = new Set<string>([
 ]);
 
 /** True when the "spoken" name is a placeholder rather than something a caller said. */
+// The single answer for "you do not have a name". Deliberately identical whether
+// she called with a placeholder or called honestly with just the phone, because
+// from her side it is the same position and one state is easier to act on than
+// two. Says nothing that can be read back to a caller as a lookup result, and
+// says outright that this is a normal place to be -- the KB previously offered
+// no state for it, which is what cornered her into inventing one.
+export const NO_NAME_GUIDANCE = 'No name yet, and that is fine \u2014 nothing was looked up, so there is nothing to tell the caller. Ask who you are speaking with, then call again with their answer. Never use a name the caller did not say.';
+
 export function isPlaceholderSpokenName(first?: string | null, last?: string | null): boolean {
   const f = String(first ?? '').toLowerCase().replace(/[^a-z ]+/g, '').trim();
   const l = String(last ?? '').toLowerCase().replace(/[^a-z ]+/g, '').trim();
@@ -424,7 +432,7 @@ export class AutotaskMcpServer {
               this.logger.warn('Contact lock: placeholder name refused', { spokenFirst, spokenLast });
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
-                status: 'no_name_given',
+                status: 'no_name_yet',
                 // Wording matters as much as the refusal. Brian, 2026-08-06:
                 // on the 10:18 call she did not just invent "John Smith", she
                 // said it out loud -- "I don't have a John Smith on file at Daus
@@ -443,12 +451,17 @@ export class AutotaskMcpServer {
                 // read back to the caller as a finding. It states a fact about the
                 // call and the next action, and says outright that there is
                 // nothing to report -- which is more robust than forbidding it.
-                guidance: 'No name has been given on this call yet. Ask the caller who you are speaking with, then call this tool again with their answer. Nothing was looked up, so there is no result to tell them about.',
+                guidance: NO_NAME_GUIDANCE,
               }));
               return;
             }
 
-            if (!parsed.contact_id && (spokenFirst || spokenLast || spokenCompany || parsed.company_id)) {
+            // callerPhone alone now enters here. Until 2026-08-06 it did not, so a
+            // call carrying only the phone fell through to the contact_id parser and
+            // came back HTTP 400. That made the one honest move -- "look me up with
+            // what I actually have" -- an error, while every documented exit from
+            // IDENTIFYING required a name. See the no_name_yet branch below.
+            if (!parsed.contact_id && (spokenFirst || spokenLast || spokenCompany || parsed.company_id || callerPhone)) {
               try {
                 // A company already resolved on this call -- a search result, or the
                 // prelock -- can enter the identity step directly. Without this the
@@ -618,6 +631,23 @@ export class AutotaskMcpServer {
                   return;
                 }
                 const companyID = companyIds[0];
+
+                // The phone resolves the account but no name has been given. Answer
+                // the question that was actually asked instead of erroring: here is
+                // the account, go and get the name. matchSpokenName with no name
+                // returns the entire pool as "candidates", which is useless and would
+                // read to her as a list she must narrow.
+                if (!spokenFirst && !spokenLast) {
+                  this.logger.info('Contact lock: phone resolved, no name given yet', { companyID });
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    status: 'no_name_yet',
+                    company_id: companyID,
+                    guidance: NO_NAME_GUIDANCE,
+                  }));
+                  return;
+                }
+
                 let pool = await this.autotaskService.searchContacts({ companyID, pageSize: 200 } as any) as PoolContact[];
                 if (!pool || pool.length === 0) pool = phoneContacts;
                 const verdict = matchSpokenName(pool, spokenFirst, spokenLast);
