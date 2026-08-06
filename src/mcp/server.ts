@@ -43,6 +43,44 @@ import { PicklistCache } from '../services/picklist.cache.js';
 export const EXCLUDED_QUEUE_IDS = new Set<number>([8]);
 
 
+// ─── Names the caller did not give ───────────────────────────────────────────
+// Measured 2026-08-06 across 314 lock_contact calls carrying a spoken name since
+// 07-23: 7 passed a name that appears nowhere in what the caller said and
+// nowhere in caller_context. Three of those were the literal "John Smith"
+// (08-03 11:19, 08-04 13:38, 08-06 10:18) on calls where the caller had said
+// only "a call about the printer issue" or similar. Three were "Bruce Rideout",
+// which came from a worked example in a tool description and stopped once that
+// was removed on 08-05 10:54. One was "Unknown Unknown".
+//
+// The model is filling a parameter it thinks it needs rather than asking. The
+// server cannot see the transcript, so it cannot tell in general whether a name
+// was really spoken -- but a canonical placeholder is never a caller.
+//
+// DELIBERATELY NOT A LIST OF REAL NAMES. "Bruce Rideout" is a real customer and
+// is not here; blocking it would refuse the actual person. Only names that no
+// caller gives, and only as a complete first+last pair for the Smith/Doe forms,
+// because Smith on its own is one of the commonest surnames we hold.
+const NON_NAME_TOKENS = new Set<string>([
+  'unknown', 'unkown', 'none', 'null', 'na', 'n/a', 'test', 'testing',
+  'caller', 'customer', 'client', 'user', 'anonymous', 'guest', 'someone',
+  'firstname', 'lastname', 'first', 'last', 'sir', 'madam', 'nobody',
+]);
+
+const PLACEHOLDER_PAIRS = new Set<string>([
+  'john smith', 'jane smith', 'john doe', 'jane doe', 'joe bloggs',
+  'john q public', 'mary major', 'richard roe',
+]);
+
+/** True when the "spoken" name is a placeholder rather than something a caller said. */
+export function isPlaceholderSpokenName(first?: string | null, last?: string | null): boolean {
+  const f = String(first ?? '').toLowerCase().replace(/[^a-z ]+/g, '').trim();
+  const l = String(last ?? '').toLowerCase().replace(/[^a-z ]+/g, '').trim();
+  if (f && NON_NAME_TOKENS.has(f)) return true;
+  if (l && NON_NAME_TOKENS.has(l)) return true;
+  const pair = `${f} ${l}`.trim();
+  return pair.length > 0 && PLACEHOLDER_PAIRS.has(pair);
+}
+
 export class AutotaskMcpServer {
   private server: Server;
   private config: McpServerConfig;
@@ -377,6 +415,21 @@ export class AutotaskMcpServer {
             const spokenLast = String(parsed.spoken_last || '').trim();
             const spokenCompany = String(parsed.spoken_company || '').trim();
             const callerPhone = String(parsed.caller_phone || '').trim();
+            // Refuse a placeholder before spending a lookup on it. Returns its own
+            // status so the agent cannot read this as "no such person, offer to add
+            // them" -- which is exactly what happened on 08-06 10:18, where she
+            // followed a fabricated "John Smith" straight into offering to create a
+            // contact at a company whose phone had already matched.
+            if (!parsed.contact_id && isPlaceholderSpokenName(spokenFirst, spokenLast)) {
+              this.logger.warn('Contact lock: placeholder name refused', { spokenFirst, spokenLast });
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                status: 'no_name_given',
+                guidance: 'That is a placeholder, not a name this caller gave you. You do not have their name yet. Ask who you are speaking with, in an open question, and call again with exactly what they say. Do not offer to add a contact and do not repeat the placeholder back to them.',
+              }));
+              return;
+            }
+
             if (!parsed.contact_id && (spokenFirst || spokenLast || spokenCompany || parsed.company_id)) {
               try {
                 // A company already resolved on this call -- a search result, or the
@@ -575,7 +628,13 @@ export class AutotaskMcpServer {
                   return;
                 }
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance: 'No contact by that name at the phone-matched company. The company is resolved and the contact is pending; offer Identity Capture per the SOP.' }));
+                // The caller is dialling from a number already on file at this
+                // company. A name that matches nobody there is more often a
+                // mishearing or an invention than a genuinely new person, so
+                // confirm the name before offering to add anyone. The old wording
+                // ("offer Identity Capture per the SOP") sent her straight to
+                // "would you like me to add you as a contact?" on 08-06 10:18.
+                res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance: 'No contact by that name at the company this phone belongs to. Before adding anyone, ask the caller to say their name again and call this tool again with it. Only if it still matches nobody should you offer Identity Capture per the SOP.' }));
                 return;
               } catch (phaseAErr) {
                 this.logger.warn('Spoken-name lock failed; falling back to no_verdict', { err: (phaseAErr as Error)?.message });
