@@ -717,6 +717,20 @@ export class AutotaskToolHandler {
 
       // Resources
       ['autotask_search_resources', async (a) => {
+        // S3 (2026-08-15): an empty searchTerm returns the entire staff roster.
+        // Measured: 41 empty-searchTerm calls across 1,765 conversations, the
+        // cornered pattern behind the 08-03 owner call (25 staff records pulled
+        // into context, the CEO named to an unknown caller). A specific name or
+        // extension is the only legitimate ask here.
+        if (!a.searchTerm || typeof a.searchTerm !== 'string' || a.searchTerm.trim() === '') {
+          return {
+            result: { status: 'search_term_required' },
+            message:
+              'searchTerm is required: a specific person\'s name or extension. ' +
+              'For role-level requests (owner, manager), take a message instead ' +
+              'of searching the roster.',
+          };
+        }
         const r = await s.searchResources(a); return { result: r, message: `Found ${r.length} resources` };
       }],
       ['autotask_lookup_tech_status', async (a) => {

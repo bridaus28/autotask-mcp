@@ -136,3 +136,17 @@ describe('duplicate-create replay', () => {
     expect(created).toHaveLength(2);
   });
 });
+
+describe('S3 roster-dump refusal', () => {
+  test('empty searchTerm on search_resources is refused', async () => {
+    const { handler } = makeHandler();
+    const r = await handler.callTool('autotask_search_resources', { searchTerm: '' });
+    expect(JSON.stringify(r)).toContain('search_term_required');
+  });
+  test('a real name still searches', async () => {
+    const { handler } = makeHandler();
+    (handler as any).autotaskService.searchResources = async () => [{ id: 1, firstName: 'Tina' }];
+    const r = await handler.callTool('autotask_search_resources', { searchTerm: 'Tina' });
+    expect(JSON.stringify(r)).toContain('\\"returned\\":1');
+  });
+});
