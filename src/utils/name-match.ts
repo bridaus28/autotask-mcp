@@ -28,7 +28,10 @@ export interface PoolContact {
 
 export type MatchVerdict =
   | { status: 'locked'; contact: PoolContact; match: 'exact' | 'fuzzy' }
-  | { status: 'candidates'; count: number }
+  // sole/soleBasis (S5, 2026-08-15): when exactly one candidate exists, carry it
+  // and how it matched so the CALLER of this function can decide whether policy
+  // allows locking it (phone-verified company). Never serialized to the agent.
+  | { status: 'candidates'; count: number; sole?: PoolContact; soleBasis?: 'exact_first' | 'fuzzy' }
   | { status: 'new_contact' };
 
 const norm = (s: unknown): string =>
@@ -115,7 +118,16 @@ export function matchSpokenName(
       // makes her confirm ("I have a Tom on file -- is your last name Daus?");
       // 'locked' would make her assert. Precedent for not locking on a first name
       // against contrary evidence: Tanya -> Tony Whetstone, 2026-06-15.
-      return viaFirst.status === 'locked' ? { status: 'candidates', count: 1 } : viaFirst;
+      // Surname missed but a unique EXACT first name exists. Do not lock here
+      // (the surname contradicts), but expose the sole candidate so the server
+      // can lock it under S5 at a phone-verified company: "Martha Garcia" whose
+      // surname token the file cannot match is the one Martha on file, and the
+      // wrong answer there is the wrong colleague at the right company, not a
+      // stranger. Fuzzy first names stay unliftable (Tanya -> Tony, 2026-06-15).
+      if (viaFirst.status === 'locked') {
+        return { status: 'candidates', count: 1, sole: viaFirst.contact, soleBasis: 'exact_first' };
+      }
+      return viaFirst;
     }
     const best = lastMatches.filter(x => x.d === lastMatches[0].d);
     if (best.length === 1) {
@@ -151,6 +163,11 @@ export function matchSpokenName(
   const exact = firstMatches.filter(x => x.d === 0);
   if (exact.length === 1) {
     return { status: 'locked', contact: exact[0].c, match: 'exact' };
+  }
+  if (exact.length === 0 && firstMatches.length === 1) {
+    // A single in-threshold FUZZY first name. Tagged so no caller of this
+    // function can ever lock it: short first names collide (Tanya -> Tony).
+    return { status: 'candidates', count: 1, sole: firstMatches[0].c, soleBasis: 'fuzzy' };
   }
   return { status: 'candidates', count: exact.length > 1 ? exact.length : firstMatches.length };
 }
@@ -213,4 +230,66 @@ export function isCompanyNameAsSurname(lastName?: string | null, companyName?: s
     if (lTokens.every(t => cTokens.has(t))) return true;
   }
   return false;
+}
+
+// ─── S5: sole-candidate lock at a verified company (2026-08-15) ──────────────
+// Policy, not matching: the matcher reports; this decides. At a company the
+// PHONE already vouched for (prelock, phone-resolved, or caller-confirmed
+// search result), exactly one candidate whose FIRST name matched exactly IS
+// the caller -- the wrong answer picks the wrong colleague at the right
+// company, never a stranger. Measured 2026-08-11..14: the four worst identity
+// calls (165s avg, 3 never locked, incl. both Covina Valley calls) were all
+// candidates count:1 at a verified company.
+//
+// Deliberately NOT lifted: fuzzy first names (Tanya -> Tony wrote a ticket to
+// the wrong man, 2026-06-15) and multi-candidate ties. A caller who gave no
+// surname can still reach this via the matcher's locked path for unique exact
+// first names -- that is the matcher's call, not this one.
+export function soleCandidateLock(verdict: MatchVerdict): PoolContact | null {
+  if (verdict.status !== 'candidates') return null;
+  if (verdict.count !== 1 || !verdict.sole) return null;
+  return verdict.soleBasis === 'exact_first' ? verdict.sole : null;
+}
+
+// ─── S4: a retry that cannot change the answer is not asked for (2026-08-15) ─
+// The candidates guidance used to instruct "ask the caller to confirm or spell
+// their name, then lock again" -- but byte-identical input is deterministic.
+// Five byte-identical multi-sends in two days (conv_8101 x3, conv_6501/8301/
+// 1201 x2) prove the loop cannot converge; the Covina caller burned 175s and
+// 247s in it and said "I wanna strangle this lady." A repeated identical
+// attempt gets a decision, not another ask.
+export const REPEAT_CANDIDATES_GUIDANCE =
+  'This result is settled for the details given. Move forward with what the ' +
+  'caller needs — answer, transfer, or take a message — and handle records per ' +
+  'UNVERIFIED INTAKE.';
+
+export const REPEAT_NEW_CONTACT_GUIDANCE =
+  'This result is settled. Offer Identity Capture per the SOP now, or move ' +
+  'forward with what the caller needs and let the closure record who called.';
+
+/** Tracks identical lock attempts inside a short window (one conversation). */
+export class RepeatedLockAttempts {
+  private seen = new Map<string, number>();
+  constructor(private ttlMs = 600_000, private maxEntries = 1000) {}
+  private ts = new Map<string, number>();
+
+  static key(callerPhone: string, companyId: unknown, first: string, last: string): string {
+    const n = (x: unknown) => String(x ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    return [n(callerPhone), n(companyId), n(first), n(last)].join('|');
+  }
+
+  /** Returns how many times this exact attempt has been seen before (0 = first). */
+  countAndRecord(key: string): number {
+    const now = Date.now();
+    const last = this.ts.get(key) ?? 0;
+    if (now - last > this.ttlMs) this.seen.delete(key);
+    if (this.seen.size >= this.maxEntries && !this.seen.has(key)) {
+      const oldest = this.seen.keys().next().value;
+      if (oldest !== undefined) { this.seen.delete(oldest); this.ts.delete(oldest); }
+    }
+    const prior = this.seen.get(key) ?? 0;
+    this.seen.set(key, prior + 1);
+    this.ts.set(key, now);
+    return prior;
+  }
 }

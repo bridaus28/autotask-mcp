@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -77,6 +77,7 @@ export class AutotaskMcpServer {
   private envConfig: EnvironmentConfig | undefined;
   private httpServer?: HttpServer;
   private picklistCache: PicklistCache;
+  private repeatedLocks = new RepeatedLockAttempts();
   private ticketPicklistIds: { statusNew: number; priorityNormal: number } | null = null;
 
   constructor(config: McpServerConfig, logger: Logger, envConfig?: EnvironmentConfig) {
@@ -401,6 +402,8 @@ export class AutotaskMcpServer {
             const spokenLast = String(parsed.spoken_last || '').trim();
             const spokenCompany = String(parsed.spoken_company || '').trim();
             const callerPhone = String(parsed.caller_phone || '').trim();
+            const lockAttemptKey = RepeatedLockAttempts.key(callerPhone, parsed.company_id, spokenFirst, spokenLast);
+            const priorIdenticalAttempts = (spokenFirst || spokenLast) ? this.repeatedLocks.countAndRecord(lockAttemptKey) : 0;
             // Refuse a placeholder before spending a lookup on it. Returns its own
             // status so the agent cannot read this as "no such person, offer to add
             // them" -- which is exactly what happened on 08-06 10:18, where she
@@ -501,9 +504,29 @@ export class AutotaskMcpServer {
                       is_primary: (c as any).primaryContact ?? false,
                     }));
                   } else if (verdict.status === 'candidates') {
-                    res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID }));
+                    const soleA = soleCandidateLock(verdict);
+                    if (soleA) {
+                      this.logger.info('Contact lock: sole exact-first candidate locked at verified company (S5)', {
+                        company_id: knownCompanyID, contactId: soleA.id,
+                      });
+                      res.end(JSON.stringify({
+                        status: 'locked', match: 'sole_candidate', contact_id: soleA.id,
+                        company_id: soleA.companyID ?? knownCompanyID,
+                        first_name: soleA.firstName ?? null, last_name: soleA.lastName ?? null,
+                        goes_by: (soleA as any).middleInitial || null,
+                        is_primary: (soleA as any).primaryContact ?? false,
+                      }));
+                    } else if (priorIdenticalAttempts > 0) {
+                      res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID, guidance: REPEAT_CANDIDATES_GUIDANCE }));
+                    } else {
+                      res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID }));
+                    }
                   } else {
-                    res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID }));
+                    if (priorIdenticalAttempts > 0) {
+                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: REPEAT_NEW_CONTACT_GUIDANCE }));
+                    } else {
+                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID }));
+                    }
                   }
                   return;
                 }
@@ -649,7 +672,25 @@ export class AutotaskMcpServer {
                   return;
                 }
                 if (verdict.status === 'candidates') {
+                  const soleB = soleCandidateLock(verdict);
                   res.writeHead(200, { 'Content-Type': 'application/json' });
+                  if (soleB) {
+                    this.logger.info('Contact lock: sole exact-first candidate locked at phone-verified company (S5)', {
+                      companyID, contactId: soleB.id,
+                    });
+                    res.end(JSON.stringify({
+                      status: 'locked', match: 'sole_candidate', contact_id: soleB.id,
+                      company_id: soleB.companyID ?? companyID,
+                      first_name: soleB.firstName ?? null, last_name: soleB.lastName ?? null,
+                      goes_by: (soleB as any).middleInitial || null,
+                      is_primary: (soleB as any).primaryContact ?? false,
+                    }));
+                    return;
+                  }
+                  if (priorIdenticalAttempts > 0) {
+                    res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: REPEAT_CANDIDATES_GUIDANCE }));
+                    return;
+                  }
                   res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: 'The name given is not a confident match. Ask the caller to confirm or spell their name, and their last name if you only have a first, then lock again; never list the names on file.' }));
                   return;
                 }
@@ -660,7 +701,7 @@ export class AutotaskMcpServer {
                 // confirm the name before offering to add anyone. The old wording
                 // ("offer Identity Capture per the SOP") sent her straight to
                 // "would you like me to add you as a contact?" on 08-06 10:18.
-                res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance: 'No contact by that name at the company this phone belongs to. Before adding anyone, ask the caller to say their name again and call this tool again with it. Only if it still matches nobody should you offer Identity Capture per the SOP.' }));
+                res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance: priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE : 'No contact by that name at the company this phone belongs to. Before adding anyone, ask the caller to say their name again and call this tool again with it. Only if it still matches nobody should you offer Identity Capture per the SOP.' }));
                 return;
               } catch (phaseAErr) {
                 this.logger.warn('Spoken-name lock failed; falling back to no_verdict', { err: (phaseAErr as Error)?.message });
