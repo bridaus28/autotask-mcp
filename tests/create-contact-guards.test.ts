@@ -1,0 +1,138 @@
+/**
+ * Name guards (S2), callerPhone persistence (S1) and duplicate-create replay
+ * on autotask_create_contact / autotask_create_company. 2026-08-15.
+ *
+ * Incidents these encode: conv_3901 08-12 (empty lastName -> Autotask 500);
+ * "Alma South Hills Escrow" 08-10 (company in the surname field); contacts
+ * 30693335/37/38/43 (created with no phone on any field, can never match a
+ * future call); companies 6870/6871 "Ricela" (retry-after-abandon duplicate,
+ * 2s apart); conv yrm2z81f 08-11 (identical create_contact fired twice).
+ */
+jest.mock('autotask-node', () => ({
+  AutotaskClient: { create: jest.fn().mockRejectedValue(new Error('Mock: no live API in tests')) }
+}));
+
+import { AutotaskToolHandler } from '../src/handlers/tool.handler';
+
+const RD_RUBBER = 328;
+const SOUTH_HILLS = 7001;
+const NEW_CO = 6869;
+
+const CONTACTS: any[] = [
+  { id: 30699001, firstName: 'Colleague', lastName: 'OnFile', companyID: RD_RUBBER,
+    phone: '+15622025244', isActive: 1 },
+  { id: 30699002, firstName: 'Existing', lastName: 'Person', companyID: SOUTH_HILLS,
+    phone: '+16269674350', isActive: 1 },
+];
+const COMPANIES: Record<number, any> = {
+  [RD_RUBBER]:   { id: RD_RUBBER,   companyName: 'RD Rubber Technology Corp.', phone: '+1 562-926-1000' },
+  [SOUTH_HILLS]: { id: SOUTH_HILLS, companyName: 'South Hills Escrow',         phone: '626-967-4350' },
+  [NEW_CO]:      { id: NEW_CO,      companyName: 'Brand New Shell',            phone: '' },
+};
+const EMPTY = new Set<number>([NEW_CO]);
+
+function makeHandler() {
+  const created: any[] = [];
+  const createdCompanies: any[] = [];
+  let nextId = 90000;
+  const service: any = {
+    async companyHasContacts(id: number) { return !EMPTY.has(id); },
+    async searchContacts({ phone }: any) {
+      const digits = (s: string) => String(s ?? '').replace(/\D/g, '').slice(-10);
+      return CONTACTS.filter(c => digits(c.phone) === digits(phone) || digits(c.mobilePhone) === digits(phone));
+    },
+    async getCompany(id: number) { return COMPANIES[id] ?? null; },
+    async findActiveContactsByEmail() { return []; },
+    async createContact(fields: any) { created.push(fields); return ++nextId; },
+    async createCompany(fields: any) { createdCompanies.push(fields); return ++nextId; },
+    testConnection: async () => true,
+  };
+  const handler = new AutotaskToolHandler(service, { info(){}, warn(){}, error(){}, debug(){} } as any);
+  (handler as any).getMappingService = async () => ({ getCompanyName: async () => null, getResourceName: async () => null });
+  return { handler, created, createdCompanies };
+}
+const call = (h: any, args: any) => h.callTool('autotask_create_contact', args);
+const callCo = (h: any, args: any) => h.callTool('autotask_create_company', args);
+const text = (r: any) => JSON.stringify(r);
+
+describe('S2 name guards', () => {
+  test('empty lastName is a question, not a field', async () => {
+    const { handler, created } = makeHandler();
+    const r = await call(handler, { companyID: RD_RUBBER, firstName: 'Tim', lastName: '', callerPhone: '+15622025244' });
+    expect(text(r)).toContain('last_name_required');
+    expect(created).toHaveLength(0);
+  });
+  test('placeholder pair refused', async () => {
+    const { handler, created } = makeHandler();
+    const r = await call(handler, { companyID: RD_RUBBER, firstName: 'John', lastName: 'Smith', callerPhone: '+15622025244' });
+    expect(text(r)).toContain('placeholder_name');
+    expect(created).toHaveLength(0);
+  });
+  test('surname "Unknown" refused', async () => {
+    const { handler, created } = makeHandler();
+    const r = await call(handler, { companyID: RD_RUBBER, firstName: 'Kristin', lastName: 'Unknown', callerPhone: '+15622025244' });
+    expect(text(r)).toContain('placeholder_name');
+    expect(created).toHaveLength(0);
+  });
+  test('company name in the surname field refused', async () => {
+    const { handler, created } = makeHandler();
+    const r = await call(handler, { companyID: SOUTH_HILLS, firstName: 'Alma', lastName: 'South Hills Escrow', callerPhone: '+16269674350' });
+    expect(text(r)).toContain('company_name_as_surname');
+    expect(created).toHaveLength(0);
+  });
+  test('corporate designator surname refused even when company lookup fails', async () => {
+    const { handler, created } = makeHandler();
+    const r = await call(handler, { companyID: RD_RUBBER, firstName: 'Bob', lastName: 'Acme LLC', callerPhone: '+15622025244' });
+    expect(text(r)).toContain('company_name_as_surname');
+    expect(created).toHaveLength(0);
+  });
+  test('real multi-word surname passes', async () => {
+    const { handler, created } = makeHandler();
+    const r = await call(handler, { companyID: RD_RUBBER, firstName: 'Maria', lastName: 'De La Cruz', callerPhone: '+15622025244' });
+    expect(text(r)).toContain('Successfully created');
+    expect(created).toHaveLength(1);
+  });
+});
+
+describe('S1 callerPhone persistence', () => {
+  test('callerPhone lands on the record when no phone was given', async () => {
+    const { handler, created } = makeHandler();
+    await call(handler, { companyID: RD_RUBBER, firstName: 'Maria', lastName: 'Delgado', callerPhone: '+15622025244' });
+    expect(created[0].phone).toBe('+15622025244');
+    expect(created[0].callerPhone).toBeUndefined();
+  });
+  test('a provided phone is never overwritten', async () => {
+    const { handler, created } = makeHandler();
+    await call(handler, { companyID: RD_RUBBER, firstName: 'Maria', lastName: 'Delgado', phone: '+19095551234', callerPhone: '+15622025244' });
+    expect(created[0].phone).toBe('+19095551234');
+  });
+  test('persists on brand-new (gate-skipped) companies too', async () => {
+    const { handler, created } = makeHandler();
+    await call(handler, { companyID: NEW_CO, firstName: 'Mary', lastName: 'Lynn', callerPhone: '+16024631044' });
+    expect(created[0].phone).toBe('+16024631044');
+  });
+});
+
+describe('duplicate-create replay', () => {
+  test('identical create_contact seconds apart writes once', async () => {
+    const { handler, created } = makeHandler();
+    const r1 = await call(handler, { companyID: RD_RUBBER, firstName: 'Daniel', lastName: 'Amini', emailAddress: 'daniel@example.com', callerPhone: '+15622025244' });
+    const r2 = await call(handler, { companyID: RD_RUBBER, firstName: 'Daniel', lastName: 'Amini', emailAddress: 'daniel@example.com', callerPhone: '+15622025244' });
+    expect(created).toHaveLength(1);
+    expect(text(r2)).toBe(text(r1));
+  });
+  test('identical create_company seconds apart writes once (the Ricela pattern)', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    const args = { companyName: 'Ricela', customer_type: 'residential', phone: '+16265551212' };
+    const r1 = await callCo(handler, { ...args });
+    const r2 = await callCo(handler, { ...args });
+    expect(createdCompanies).toHaveLength(1);
+    expect(text(r2)).toBe(text(r1));
+  });
+  test('different names are not replays', async () => {
+    const { handler, created } = makeHandler();
+    await call(handler, { companyID: RD_RUBBER, firstName: 'Daniel', lastName: 'Amini', callerPhone: '+15622025244' });
+    await call(handler, { companyID: RD_RUBBER, firstName: 'Diana', lastName: 'Amini', callerPhone: '+15622025244' });
+    expect(created).toHaveLength(2);
+  });
+});

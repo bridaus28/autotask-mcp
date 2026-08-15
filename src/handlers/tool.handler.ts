@@ -3,7 +3,8 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { AutotaskService, resolveTicketQuery, isNotFoundError, isExactPhoneMatch } from '../services/autotask.service.js';
-import { matchSpokenName } from '../utils/name-match.js';
+import { matchSpokenName, isPlaceholderSpokenName, isCompanyNameAsSurname } from '../utils/name-match.js';
+import { RecentWrites } from '../utils/recent-writes.js';
 import { PicklistCache, PicklistValue } from '../services/picklist.cache.js';
 import { Logger } from '../utils/logger.js';
 import { formatCompactResponse, detectEntityType, COMPACT_SEARCH_TOOLS } from '../utils/response.formatter.js';
@@ -113,6 +114,8 @@ export class AutotaskToolHandler {
   protected picklistCache: PicklistCache;
   protected mcpServer: Server | null = null;
   private mappingService: MappingService | null = null;
+
+  private recentCreates = new RecentWrites();
 
   constructor(autotaskService: AutotaskService, logger: Logger) {
     this.autotaskService = autotaskService;
@@ -295,6 +298,9 @@ export class AutotaskToolHandler {
    */
   private getDispatchTable(): Map<string, (args: any) => Promise<{ result: any; message: string; hint?: string; effectivePageSize?: number }>> {
     const s = this.autotaskService;
+    // Short-window duplicate-create memo, per handler instance (one long-lived
+    // instance in production). See utils/recent-writes.ts for the incidents.
+    const RECENT_CREATES = this.recentCreates;
     type H = (args: any) => Promise<{ result: any; message: string; hint?: string; effectivePageSize?: number }>;
     return new Map<string, H>([
       // Connection
@@ -363,7 +369,13 @@ export class AutotaskToolHandler {
           rest.classification = 13;      // Residential — verified live 2026-06-12
           rest.companyCategoryID = 100;  // residential category — verified live 2026-06-12
         }
-        const id = await s.createCompany(rest); return { result: id, message: `Successfully created company with ID: ${id}` };
+        const coKey = RecentWrites.key('company', { companyName: rest.companyName, phone: phoneDigits });
+        const coReplay = RECENT_CREATES.check(coKey);
+        if (coReplay !== undefined) return coReplay;
+        const id = await s.createCompany(rest);
+        const coOutcome = { result: id, message: `Successfully created company with ID: ${id}` };
+        RECENT_CREATES.record(coKey, coOutcome);
+        return coOutcome;
       }],
       ['autotask_update_company', async (a) => {
         await s.updateCompany(a.id, a); return { result: undefined, message: `Successfully updated company ID: ${a.id}` };
@@ -379,6 +391,55 @@ export class AutotaskToolHandler {
         return { result: { contact: r }, message: 'Contact retrieved successfully' };
       }],
       ['autotask_create_contact', async (a) => {
+        // ══ NAME GUARDS (S2, 2026-08-15) ═══════════════════════════════════
+        // The same disease the lock's placeholder refusal treats, at a door
+        // that writes durable records. conv_3901 (08-12) sent an empty
+        // lastName straight through to an Autotask 500; "Alma South Hills
+        // Escrow" (08-10) put the company in the surname field and only the
+        // phone gate stopped the write.
+        const firstNameIn = String(a.firstName ?? '').trim();
+        const lastNameIn  = String(a.lastName ?? '').trim();
+        if (!lastNameIn) {
+          return {
+            result: { status: 'last_name_required', created: false },
+            message:
+              'Not created. The record needs a last name. Ask the caller for their ' +
+              'last name, then call again with lastName set to their answer.',
+          };
+        }
+        if (isPlaceholderSpokenName(firstNameIn, lastNameIn)) {
+          return {
+            result: { status: 'placeholder_name', created: false },
+            message:
+              'Not created. Ask who you are speaking with and use their answer. ' +
+              'Never use a name the caller did not say.',
+          };
+        }
+        let companyNameForGuard: string | null = null;
+        try {
+          const coForGuard: any = await s.getCompany(a.companyID);
+          companyNameForGuard = coForGuard?.companyName ?? null;
+        } catch { /* fail open: worst case here is record quality, not access */ }
+        if (isCompanyNameAsSurname(lastNameIn, companyNameForGuard)) {
+          return {
+            result: { status: 'company_name_as_surname', created: false },
+            message:
+              'Not created. lastName looks like a company name rather than a ' +
+              "person's surname. The company belongs in companyID only; ask the " +
+              'caller for their own last name, then call again.',
+          };
+        }
+
+        // ══ DUPLICATE-CREATE REPLAY ═════════════════════════════════════════
+        // Identical create seen seconds ago on this instance: return the first
+        // outcome, write nothing. The retry-after-abandon pattern.
+        const replayKey = RecentWrites.key('contact', {
+          companyID: a.companyID, firstName: firstNameIn, lastName: lastNameIn,
+          emailAddress: a.emailAddress, callerPhone: a.callerPhone,
+        });
+        const replayed = RECENT_CREATES.check(replayKey);
+        if (replayed !== undefined) return replayed;
+
         // ══ ACCESS GATE ═══════════════════════════════════════════════════
         // Creating a contact IS granting access. The pre-call webhook matches
         // inbound calls on contact phone/mobilePhone, so a contact carrying the
@@ -520,8 +581,15 @@ export class AutotaskToolHandler {
           }
         }
 
-        // callerPhone is a gate input, not a Contact field.
+        // callerPhone: consumed by the gate above, AND persisted onto the record
+        // (S1, 2026-08-15). The point of auto-adding a contact is that the next
+        // call from this number matches; 4 of the 10 contacts Ivy created before
+        // this fix carried no phone on any field and could never match again.
+        const callerPhoneIn = String(a.callerPhone ?? '').trim();
         delete a.callerPhone;
+        if (callerPhoneIn && !String(a.phone ?? '').trim() && !String(a.mobilePhone ?? '').trim()) {
+          a.phone = callerPhoneIn;
+        }
 
         // No email provided: opt the contact out of email workflows so the record
         // matches what the Autotask UI requires for emailless contacts (the UI
@@ -532,7 +600,10 @@ export class AutotaskToolHandler {
           a.isOptedOutFromBulkEmail = true;
           a.receivesEmailNotifications = false;
         }
-        const id = await s.createContact(a); return { result: id, message: `Successfully created contact with ID: ${id}` };
+        const id = await s.createContact(a);
+        const outcome = { result: id, message: `Successfully created contact with ID: ${id}` };
+        RECENT_CREATES.record(replayKey, outcome);
+        return outcome;
       }],
 
       // Tickets

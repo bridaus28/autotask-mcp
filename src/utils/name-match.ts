@@ -154,3 +154,63 @@ export function matchSpokenName(
   }
   return { status: 'candidates', count: exact.length > 1 ? exact.length : firstMatches.length };
 }
+
+// ─── Placeholder-name detection (moved from mcp/server.ts 2026-08-15 so the ───
+// ─── create-side guards can share it without an import cycle) ────────────────
+// The model fills a parameter it thinks it needs rather than asking. The server
+// cannot see the transcript, so it cannot tell in general whether a name was
+// really spoken -- but a canonical placeholder is never a caller.
+//
+// DELIBERATELY NOT A LIST OF REAL NAMES. "Bruce Rideout" is a real customer and
+// is not here; blocking it would refuse the actual person. Only names that no
+// caller gives, and only as a complete first+last pair for the Smith/Doe forms,
+// because Smith on its own is one of the commonest surnames we hold.
+export const NON_NAME_TOKENS = new Set<string>([
+  'unknown', 'unkown', 'none', 'null', 'na', 'n/a', 'test', 'testing',
+  'caller', 'customer', 'client', 'user', 'anonymous', 'guest', 'someone',
+  'firstname', 'lastname', 'first', 'last', 'sir', 'madam', 'nobody',
+]);
+
+export const PLACEHOLDER_PAIRS = new Set<string>([
+  'john smith', 'jane smith', 'john doe', 'jane doe', 'joe bloggs',
+  'john q public', 'mary major', 'richard roe',
+]);
+
+/** True when the "spoken" name is a placeholder rather than something a caller said. */
+export function isPlaceholderSpokenName(first?: string | null, last?: string | null): boolean {
+  const f = String(first ?? '').toLowerCase().replace(/[^a-z ]+/g, '').trim();
+  const l = String(last ?? '').toLowerCase().replace(/[^a-z ]+/g, '').trim();
+  if (f && NON_NAME_TOKENS.has(f)) return true;
+  if (l && NON_NAME_TOKENS.has(l)) return true;
+  const pair = `${f} ${l}`.trim();
+  return pair.length > 0 && PLACEHOLDER_PAIRS.has(pair);
+}
+
+// ─── Company-name-as-surname detection (S2, 2026-08-15) ─────────────────────
+// "Alma South Hills Escrow" came one parameter from becoming a contact on
+// 2026-08-10: the caller's company went into lastName and only the phone gate
+// stopped the write. A surname is refused when it matches the target company's
+// name, or when it ends in a corporate designator no person's surname carries.
+//
+// Kept deliberately narrow: "De La Cruz" and other real multi-word surnames
+// must pass. Token containment fires only when EVERY surname token appears in
+// the company name (>=2 tokens), which a coincidental shared surname cannot do.
+const CORPORATE_DESIGNATORS = new Set<string>([
+  'inc', 'incorporated', 'llc', 'llp', 'corp', 'corporation', 'ltd', 'company', 'co',
+]);
+
+export function isCompanyNameAsSurname(lastName?: string | null, companyName?: string | null): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const l = norm(String(lastName ?? ''));
+  if (!l) return false;
+  const lTokens = l.split(' ');
+  if (CORPORATE_DESIGNATORS.has(lTokens[lTokens.length - 1])) return true;
+  const c = norm(String(companyName ?? ''));
+  if (!c) return false;
+  if (l === c) return true;
+  if (lTokens.length >= 2) {
+    const cTokens = new Set(c.split(' '));
+    if (lTokens.every(t => cTokens.has(t))) return true;
+  }
+  return false;
+}

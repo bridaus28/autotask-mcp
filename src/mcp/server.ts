@@ -52,26 +52,12 @@ export const EXCLUDED_QUEUE_IDS = new Set<number>([8]);
 // which came from a worked example in a tool description and stopped once that
 // was removed on 08-05 10:54. One was "Unknown Unknown".
 //
-// The model is filling a parameter it thinks it needs rather than asking. The
-// server cannot see the transcript, so it cannot tell in general whether a name
-// was really spoken -- but a canonical placeholder is never a caller.
-//
-// DELIBERATELY NOT A LIST OF REAL NAMES. "Bruce Rideout" is a real customer and
-// is not here; blocking it would refuse the actual person. Only names that no
-// caller gives, and only as a complete first+last pair for the Smith/Doe forms,
-// because Smith on its own is one of the commonest surnames we hold.
-const NON_NAME_TOKENS = new Set<string>([
-  'unknown', 'unkown', 'none', 'null', 'na', 'n/a', 'test', 'testing',
-  'caller', 'customer', 'client', 'user', 'anonymous', 'guest', 'someone',
-  'firstname', 'lastname', 'first', 'last', 'sir', 'madam', 'nobody',
-]);
+// Placeholder-name detection lives in utils/name-match.ts (moved 2026-08-15 so the
+// create-side guards share it without an import cycle). Re-exported here so
+// existing imports and tests keep checking the real function.
+import { isPlaceholderSpokenName } from '../utils/name-match.js';
+export { isPlaceholderSpokenName, NON_NAME_TOKENS, PLACEHOLDER_PAIRS } from '../utils/name-match.js';
 
-const PLACEHOLDER_PAIRS = new Set<string>([
-  'john smith', 'jane smith', 'john doe', 'jane doe', 'joe bloggs',
-  'john q public', 'mary major', 'richard roe',
-]);
-
-/** True when the "spoken" name is a placeholder rather than something a caller said. */
 // The single answer for "you do not have a name". Deliberately identical whether
 // she called with a placeholder or called honestly with just the phone, because
 // from her side it is the same position and one state is easier to act on than
@@ -80,14 +66,6 @@ const PLACEHOLDER_PAIRS = new Set<string>([
 // no state for it, which is what cornered her into inventing one.
 export const NO_NAME_GUIDANCE = 'No name yet, and that is fine \u2014 nothing was looked up, so there is nothing to tell the caller. Ask who you are speaking with, then call again with their answer. Never use a name the caller did not say.';
 
-export function isPlaceholderSpokenName(first?: string | null, last?: string | null): boolean {
-  const f = String(first ?? '').toLowerCase().replace(/[^a-z ]+/g, '').trim();
-  const l = String(last ?? '').toLowerCase().replace(/[^a-z ]+/g, '').trim();
-  if (f && NON_NAME_TOKENS.has(f)) return true;
-  if (l && NON_NAME_TOKENS.has(l)) return true;
-  const pair = `${f} ${l}`.trim();
-  return pair.length > 0 && PLACEHOLDER_PAIRS.has(pair);
-}
 
 export class AutotaskMcpServer {
   private server: Server;
