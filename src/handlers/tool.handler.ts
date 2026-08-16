@@ -689,7 +689,10 @@ export class AutotaskToolHandler {
           ticketNumber = ticket?.ticketNumber;
         } catch { /* non-critical */ }
         const display = ticketNumber ? `${ticketNumber} (ID: ${id})` : `${id}`;
-        return { result: { id, ticketNumber }, message: `Successfully created ticket ${display}` };
+        // ticketID at the top level of the result: ElevenLabs response assignments
+        // read tool responses by path, and this is what writes the locked_ticket_id
+        // dynamic variable that /call-closure prefers over transcript extraction.
+        return { result: { id, ticketNumber, ticketID: id }, message: `Successfully created ticket ${display}` };
       }],
       ['autotask_update_ticket', async (a) => {
         const { ticketId, ...updates } = a;
@@ -932,7 +935,9 @@ export class AutotaskToolHandler {
             });
           }
         }
-        return { result: id, message: `Successfully created ticket note with ID: ${id}.${statusMsg}` };
+        // ticketID echoed for the same reason as on create_ticket: a note binds the
+        // call to this ticket, and the assignment writes locked_ticket_id from it.
+        return { result: { noteId: id, ticketID: a.ticketId }, message: `Successfully created ticket note with ID: ${id}.${statusMsg}` };
       }],
       ['autotask_get_project_note', async (a) => {
         const r = await s.getProjectNote(a.projectId, a.noteId); return { result: r, message: 'Project note retrieved successfully' };

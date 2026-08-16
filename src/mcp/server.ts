@@ -1590,6 +1590,34 @@ export class AutotaskMcpServer {
               }
             };
 
+            // ── locked_ticket_id: the deterministic bind (2026-08-15, Brian) ──
+            // When the agent's tool assignments are configured, every create_ticket /
+            // create_ticket_note writes the ticket id into the locked_ticket_id dynamic
+            // variable, last write wins. Closure reads it here FIRST: no transcript
+            // extraction, no scan, no guessing. Agents without the assignment simply
+            // never send it and fall through to the existing paths unchanged.
+            const lockedTicketId = parseInt(String(dynVars.locked_ticket_id ?? ''), 10);
+            if (!existingTicketNumber && Number.isFinite(lockedTicketId) && lockedTicketId > 0 && lockedTicketId < 1000000) {
+              try {
+                await this.autotaskService.createTicketNote(lockedTicketId, {
+                  title: 'Ivy Call Closure Update',
+                  description,
+                  noteType: 1,
+                  publish: 2,
+                });
+                this.logger.info('Call closure: bound via locked_ticket_id', {
+                  ticketId: lockedTicketId, conversationId: payload.conversation_id,
+                });
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ticket_id: lockedTicketId, action: 'updated' }));
+                return;
+              } catch (bindErr) {
+                this.logger.warn('Call closure: locked_ticket_id bind failed, falling through', {
+                  ticketId: lockedTicketId, error: bindErr,
+                });
+              }
+            }
+
             if (!existingTicketNumber) {
               const workedTicketId = findWorkedTicketId();
               if (workedTicketId) {
