@@ -232,6 +232,43 @@ export function isCompanyNameAsSurname(lastName?: string | null, companyName?: s
   return false;
 }
 
+// ─── B12: organization-shaped surnames at LOCK time (2026-08-16) ─────────────
+// Corpus analysis (STT_NAME_ANALYSIS, 2,525 calls): ~15 identity failures began
+// with the caller's COMPANY landing in spoken_last -- "Elsa Big Bear Municipal
+// Water District", "Jessica BB Tax and Accounting", "Taylor SFG Management".
+// The matcher then compared an organization name against surnames and failed.
+// S2 blocks this shape at create time; this catches it where it starts, so the
+// first name alone can still lock (S5) and the caller never notices.
+//
+// Kept deliberately narrow, same doctrine as isCompanyNameAsSurname: real
+// compound surnames must pass. "De La Cruz" (3 tokens), "Parrilla Marquez",
+// "De Sigio III" all pass. Fires on: a corporate designator anywhere, 4+
+// tokens, or a token that is essentially never a surname (management,
+// accounting, municipal...). Single-token surnames never fire except pure
+// designators, so Church, Wells, and Marine the person stay reachable.
+const ORG_ONLY_TOKENS = new Set<string>([
+  'and', 'management', 'accounting', 'consulting', 'solutions', 'associates',
+  'enterprises', 'industries', 'municipal', 'district', 'escrow', 'insurance',
+  'realty', 'properties', 'staffing', 'logistics', 'systems', 'technologies',
+  'services', 'group',
+]);
+
+export function isOrgShapedSurname(lastName?: string | null, companyName?: string | null): boolean {
+  if (isCompanyNameAsSurname(lastName, companyName)) return true;
+  const norm = String(lastName ?? '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!norm) return false;
+  const tokens = norm.split(' ');
+  if (tokens.length >= 4) return true;
+  if (tokens.length >= 2 && tokens.some(t => ORG_ONLY_TOKENS.has(t))) return true;
+  return false;
+}
+
+export const ORG_SURNAME_GUIDANCE =
+  'The last name received is shaped like an organization name rather than a ' +
+  'family name, so the match ran on the first name alone. Keep the ' +
+  'organization as company context if useful, ask for the caller\'s own last ' +
+  'name, then lock again with it.';
+
 // ─── S5: sole-candidate lock at a verified company (2026-08-15) ──────────────
 // Policy, not matching: the matcher reports; this decides. At a company the
 // PHONE already vouched for (prelock, phone-resolved, or caller-confirmed

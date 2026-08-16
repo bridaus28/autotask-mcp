@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -416,6 +416,12 @@ export class AutotaskMcpServer {
             const spokenLast = String(parsed.spoken_last || '').trim();
             const spokenCompany = String(parsed.spoken_company || '').trim();
             const callerPhone = String(parsed.caller_phone || '').trim();
+            // B12: an organization-shaped spoken_last never matches a surname, so
+            // strip it and let the first name carry the match (S5 can still lock a
+            // sole exact-first candidate silently). Guidance is attached only when
+            // the first name alone does not resolve. See name-match.ts.
+            const orgShapedLast = Boolean(spokenLast) && isOrgShapedSurname(spokenLast);
+            const effectiveLast = orgShapedLast ? '' : spokenLast;
             const lockAttemptKey = RepeatedLockAttempts.key(callerPhone, parsed.company_id, spokenFirst, spokenLast);
             const priorIdenticalAttempts = (spokenFirst || spokenLast) ? this.repeatedLocks.countAndRecord(lockAttemptKey) : 0;
             // Refuse a placeholder before spending a lookup on it. Returns its own
@@ -520,7 +526,7 @@ export class AutotaskMcpServer {
                 }
                 if (companyIdUsable) {
                   const pool = await this.autotaskService.searchContacts({ companyID: knownCompanyID, pageSize: 200 } as any) as PoolContact[];
-                  const verdict = matchSpokenName(pool || [], spokenFirst, spokenLast);
+                  const verdict = matchSpokenName(pool || [], spokenFirst, effectiveLast);
                   this.logger.info('Contact lock: resolved within a caller-supplied company', {
                     company_id: knownCompanyID, poolSize: (pool || []).length, verdict: verdict.status,
                   });
@@ -547,13 +553,17 @@ export class AutotaskMcpServer {
                         goes_by: (soleA as any).middleInitial || null,
                         is_primary: (soleA as any).primaryContact ?? false,
                       }));
+                    } else if (orgShapedLast) {
+                      res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID, guidance: ORG_SURNAME_GUIDANCE }));
                     } else if (priorIdenticalAttempts > 0) {
                       res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID, guidance: REPEAT_CANDIDATES_GUIDANCE }));
                     } else {
                       res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID }));
                     }
                   } else {
-                    if (priorIdenticalAttempts > 0) {
+                    if (orgShapedLast) {
+                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: ORG_SURNAME_GUIDANCE }));
+                    } else if (priorIdenticalAttempts > 0) {
                       res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: REPEAT_NEW_CONTACT_GUIDANCE }));
                     } else {
                       res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: CLEAR_NEW_GUIDANCE }));
@@ -669,8 +679,8 @@ export class AutotaskMcpServer {
                 // the account, go and get the name. matchSpokenName with no name
                 // returns the entire pool as "candidates", which is useless and would
                 // read to her as a list she must narrow.
-                if (!spokenFirst && !spokenLast) {
-                  this.logger.info('Contact lock: phone resolved, no name given yet', { companyID });
+                if (!spokenFirst && (!spokenLast || orgShapedLast)) {
+                  this.logger.info('Contact lock: phone resolved, no name given yet', { companyID, orgShapedLast });
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   res.end(JSON.stringify({
                     status: 'no_name_yet',
@@ -682,7 +692,7 @@ export class AutotaskMcpServer {
 
                 let pool = await this.autotaskService.searchContacts({ companyID, pageSize: 200 } as any) as PoolContact[];
                 if (!pool || pool.length === 0) pool = phoneContacts;
-                const verdict = matchSpokenName(pool, spokenFirst, spokenLast);
+                const verdict = matchSpokenName(pool, spokenFirst, effectiveLast);
                 if (verdict.status === 'locked') {
                   const c = verdict.contact;
                   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -718,6 +728,10 @@ export class AutotaskMcpServer {
                     }));
                     return;
                   }
+                  if (orgShapedLast) {
+                    res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: ORG_SURNAME_GUIDANCE }));
+                    return;
+                  }
                   if (priorIdenticalAttempts > 0) {
                     res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: REPEAT_CANDIDATES_GUIDANCE }));
                     return;
@@ -733,7 +747,8 @@ export class AutotaskMcpServer {
                 // ("offer Identity Capture per the SOP") sent her straight to
                 // "would you like me to add you as a contact?" on 08-06 10:18.
                 res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance:
-                  priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE : CLEAR_NEW_GUIDANCE }));
+                  orgShapedLast ? ORG_SURNAME_GUIDANCE
+                  : priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE : CLEAR_NEW_GUIDANCE }));
                 return;
               } catch (phaseAErr) {
                 this.logger.warn('Spoken-name lock failed; falling back to no_verdict', { err: (phaseAErr as Error)?.message });

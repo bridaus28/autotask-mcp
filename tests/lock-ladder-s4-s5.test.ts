@@ -92,3 +92,37 @@ describe('S4 repeated identical attempts', () => {
     }
   });
 });
+
+// ─── B12: organization-shaped surnames (2026-08-16) ─────────────────────────
+import { isOrgShapedSurname, ORG_SURNAME_GUIDANCE } from '../src/utils/name-match.js';
+
+describe('B12 isOrgShapedSurname', () => {
+  // The 15 historical failure shapes (STT_NAME_ANALYSIS 2026-08-16)
+  it('fires on the observed corpus shapes', () => {
+    expect(isOrgShapedSurname('Big Bear Municipal Water District')).toBe(true); // 5 tokens
+    expect(isOrgShapedSurname('BB Tax and Accounting')).toBe(true);            // 4 tokens + org words
+    expect(isOrgShapedSurname('SFG Management')).toBe(true);                   // org word
+    expect(isOrgShapedSurname('Cohen Patel LLC')).toBe(true);                  // designator
+    expect(isOrgShapedSurname('Roadworks Inc')).toBe(true);                    // designator
+  });
+  it('passes real compound surnames', () => {
+    expect(isOrgShapedSurname('De La Cruz')).toBe(false);
+    expect(isOrgShapedSurname('Parrilla Marquez')).toBe(false);
+    expect(isOrgShapedSurname('De Sigio III')).toBe(false);
+    expect(isOrgShapedSurname('Van Der Berg')).toBe(false);
+  });
+  it('never fires on single-token surnames that are also common nouns', () => {
+    expect(isOrgShapedSurname('Church')).toBe(false);
+    expect(isOrgShapedSurname('Wells')).toBe(false);
+    expect(isOrgShapedSurname('Marine')).toBe(false);
+    expect(isOrgShapedSurname('Daus')).toBe(false);
+  });
+  it('still defers to the S2 company-name comparison when one is supplied', () => {
+    expect(isOrgShapedSurname('South Hills Escrow', 'South Hills Escrow Corp')).toBe(true);
+  });
+  it('guidance is positively framed and instructs the retry', () => {
+    expect(ORG_SURNAME_GUIDANCE).toMatch(/first name alone/);
+    expect(ORG_SURNAME_GUIDANCE).toMatch(/lock again/);
+    expect(ORG_SURNAME_GUIDANCE).not.toMatch(/—/); // no em-dashes in agent-facing text
+  });
+});
