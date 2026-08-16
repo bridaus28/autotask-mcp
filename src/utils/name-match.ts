@@ -293,3 +293,31 @@ export class RepeatedLockAttempts {
     return prior;
   }
 }
+
+// ─── Distance-to-pool as computable confidence (2026-08-15, Brian) ───────────
+// ElevenLabs exposes no STT confidence, and re-saying a name mostly reproduces
+// the same transcription (five byte-identical lock attempts across two Covina
+// calls). What we CAN measure is whether the spoken name sits just outside
+// match range of someone on file -- the "Tom Daus heard as Tom Dev" class --
+// versus nowhere near anyone, the genuinely-new-caller class. The first earns
+// a spelling request (an independent channel); the second earns no re-ask at
+// all.
+export function nearestSurnameDistance(pool: PoolContact[], spokenLast?: string | null): number {
+  const l = String(spokenLast ?? '').toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  if (!l || pool.length === 0) return Infinity;
+  let best = Infinity;
+  for (const c of pool) {
+    const toks = String(c.lastName ?? '').toLowerCase().replace(/[^a-z]+/g, ' ').split(' ').filter(Boolean);
+    for (const t of toks) best = Math.min(best, editDistance(l, t));
+  }
+  return best;
+}
+
+/** True when the spoken surname is a whisker outside match range of someone on file. */
+export function isNearMissSurname(pool: PoolContact[], spokenLast?: string | null): boolean {
+  const l = String(spokenLast ?? '').toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  if (!l) return false;
+  const d = nearestSurnameDistance(pool, l);
+  const t = threshold(l);
+  return d > t && d <= t + 2;
+}

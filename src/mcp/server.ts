@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isNearMissSurname, isPlaceholderSpokenName } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -55,7 +55,6 @@ export const EXCLUDED_QUEUE_IDS = new Set<number>([8]);
 // Placeholder-name detection lives in utils/name-match.ts (moved 2026-08-15 so the
 // create-side guards share it without an import cycle). Re-exported here so
 // existing imports and tests keep checking the real function.
-import { isPlaceholderSpokenName } from '../utils/name-match.js';
 export { isPlaceholderSpokenName, NON_NAME_TOKENS, PLACEHOLDER_PAIRS } from '../utils/name-match.js';
 
 // The single answer for "you do not have a name". Deliberately identical whether
@@ -64,6 +63,21 @@ export { isPlaceholderSpokenName, NON_NAME_TOKENS, PLACEHOLDER_PAIRS } from '../
 // two. Says nothing that can be read back to a caller as a lookup result, and
 // says outright that this is a normal place to be -- the KB previously offered
 // no state for it, which is what cornered her into inventing one.
+// Distance-aware new_contact guidance (2026-08-15, Brian). Re-saying a name
+// mostly reproduces the same transcription, so the escalation differs by what
+// the distance to the records says. Near-miss: spelling is the one channel
+// that adds signal. Nothing close: no re-ask at all; the capture flow already
+// spell-confirms once before writing.
+export const NEAR_MISS_GUIDANCE =
+  'The name lands close to the records without matching. Ask the caller to ' +
+  'spell their last name, then call again with the spelled name. The names on ' +
+  'file stay internal.';
+
+export const CLEAR_NEW_GUIDANCE =
+  'No one near that name at this account: treat the caller as new. Offer ' +
+  'Identity Capture per the SOP now; the capture flow confirms spelling ' +
+  'before anything is written.';
+
 export const NO_NAME_GUIDANCE = 'No name yet, and that is fine \u2014 nothing was looked up, so there is nothing to tell the caller. Ask who you are speaking with, then call again with their answer. Never use a name the caller did not say.';
 
 
@@ -409,7 +423,24 @@ export class AutotaskMcpServer {
             // them" -- which is exactly what happened on 08-06 10:18, where she
             // followed a fabricated "John Smith" straight into offering to create a
             // contact at a company whose phone had already matched.
-            if (!parsed.contact_id && isPlaceholderSpokenName(spokenFirst, spokenLast)) {
+            // A canonical placeholder pair is refused ONLY when nobody by that name
+            // exists at the phone-matched company. Real Jane Smiths exist (Brian tested
+            // as one on 2026-08-15 and hit the refusal); an INVENTED Jane Smith matches
+            // nobody, so the pool check preserves the anti-fabrication guard while a
+            // real, on-file Jane Smith locks like anyone else.
+            let placeholderVouchedByPool = false;
+            if (!parsed.contact_id && isPlaceholderSpokenName(spokenFirst, spokenLast) && callerPhone) {
+              try {
+                const pc = await this.autotaskService.searchContacts({ phone: callerPhone }) as PoolContact[];
+                const cid0 = [...new Set((pc || []).map(c => c.companyID).filter((x): x is number => x != null))];
+                if (cid0.length === 1) {
+                  const pool0 = await this.autotaskService.searchContacts({ companyID: cid0[0], pageSize: 200 } as any) as PoolContact[];
+                  const v0 = matchSpokenName(pool0 || [], spokenFirst, spokenLast);
+                  placeholderVouchedByPool = v0.status === 'locked' || (v0.status === 'candidates' && v0.count >= 1);
+                }
+              } catch { /* fail toward the refusal, the safe side */ }
+            }
+            if (!parsed.contact_id && isPlaceholderSpokenName(spokenFirst, spokenLast) && !placeholderVouchedByPool) {
               this.logger.warn('Contact lock: placeholder name refused', { spokenFirst, spokenLast });
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
@@ -524,8 +555,10 @@ export class AutotaskMcpServer {
                   } else {
                     if (priorIdenticalAttempts > 0) {
                       res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: REPEAT_NEW_CONTACT_GUIDANCE }));
+                    } else if (isNearMissSurname(pool || [], spokenLast)) {
+                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: NEAR_MISS_GUIDANCE }));
                     } else {
-                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID }));
+                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: CLEAR_NEW_GUIDANCE }));
                     }
                   }
                   return;
@@ -701,7 +734,10 @@ export class AutotaskMcpServer {
                 // confirm the name before offering to add anyone. The old wording
                 // ("offer Identity Capture per the SOP") sent her straight to
                 // "would you like me to add you as a contact?" on 08-06 10:18.
-                res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance: priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE : 'No contact by that name at the company this phone belongs to. Before adding anyone, ask the caller to say their name again and call this tool again with it. Only if it still matches nobody should you offer Identity Capture per the SOP.' }));
+                res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance:
+                  priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE
+                  : isNearMissSurname(pool || [], spokenLast) ? NEAR_MISS_GUIDANCE
+                  : CLEAR_NEW_GUIDANCE }));
                 return;
               } catch (phaseAErr) {
                 this.logger.warn('Spoken-name lock failed; falling back to no_verdict', { err: (phaseAErr as Error)?.message });
