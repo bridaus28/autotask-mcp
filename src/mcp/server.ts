@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isNearMissSurname, isPlaceholderSpokenName } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -555,8 +555,6 @@ export class AutotaskMcpServer {
                   } else {
                     if (priorIdenticalAttempts > 0) {
                       res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: REPEAT_NEW_CONTACT_GUIDANCE }));
-                    } else if (isNearMissSurname(pool || [], spokenLast)) {
-                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: NEAR_MISS_GUIDANCE }));
                     } else {
                       res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: CLEAR_NEW_GUIDANCE }));
                     }
@@ -735,9 +733,7 @@ export class AutotaskMcpServer {
                 // ("offer Identity Capture per the SOP") sent her straight to
                 // "would you like me to add you as a contact?" on 08-06 10:18.
                 res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance:
-                  priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE
-                  : isNearMissSurname(pool || [], spokenLast) ? NEAR_MISS_GUIDANCE
-                  : CLEAR_NEW_GUIDANCE }));
+                  priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE : CLEAR_NEW_GUIDANCE }));
                 return;
               } catch (phaseAErr) {
                 this.logger.warn('Spoken-name lock failed; falling back to no_verdict', { err: (phaseAErr as Error)?.message });

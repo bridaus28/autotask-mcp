@@ -585,7 +585,20 @@ export class AutotaskToolHandler {
         // (S1, 2026-08-15). The point of auto-adding a contact is that the next
         // call from this number matches; 4 of the 10 contacts Ivy created before
         // this fix carried no phone on any field and could never match again.
-        const callerPhoneIn = String(a.callerPhone ?? '').trim();
+        // The model has sent the literal variable NAME here ("system__caller_id",
+        // observed live 2026-08-16) — a wrong value that then fails the tied-to-
+        // account check with a false "not associated" answer. A phone is digits.
+        const callerPhoneRaw = String(a.callerPhone ?? '').trim();
+        if (callerPhoneRaw && String(callerPhoneRaw).replace(/\D/g, '').length < 7) {
+          return {
+            result: { status: 'caller_phone_invalid', created: false },
+            message:
+              'Not created. callerPhone must be the actual number the caller is ' +
+              'dialling from, as digits. It is supplied automatically on this ' +
+              'agent; call again without inventing a value.',
+          };
+        }
+        const callerPhoneIn = callerPhoneRaw;
         delete a.callerPhone;
         if (callerPhoneIn && !String(a.phone ?? '').trim() && !String(a.mobilePhone ?? '').trim()) {
           a.phone = callerPhoneIn;

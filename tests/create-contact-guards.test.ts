@@ -113,6 +113,20 @@ describe('S1 callerPhone persistence', () => {
   });
 });
 
+describe('literal-phone guard', () => {
+  test('the variable NAME as a phone is refused (observed live 2026-08-16)', async () => {
+    const { handler, created } = makeHandler();
+    const r = await call(handler, { companyID: RD_RUBBER, firstName: 'Ben', lastName: 'Blech', callerPhone: 'system__caller_id' });
+    expect(JSON.stringify(r)).toContain('caller_phone_invalid');
+    expect(created).toHaveLength(0);
+  });
+  test('a real number still passes', async () => {
+    const { handler, created } = makeHandler();
+    await call(handler, { companyID: RD_RUBBER, firstName: 'Maria', lastName: 'Delgado', callerPhone: '+15622025244' });
+    expect(created).toHaveLength(1);
+  });
+});
+
 describe('duplicate-create replay', () => {
   test('identical create_contact seconds apart writes once', async () => {
     const { handler, created } = makeHandler();

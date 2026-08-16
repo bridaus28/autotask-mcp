@@ -12,20 +12,18 @@ const dtc = [
   { id: 2, firstName: 'Brian', lastName: 'Gudauskas', companyID: 1769 },
 ];
 
-describe('near-miss detection', () => {
-  test('Tom Dev is a near-miss of Daus (the STT garble class)', () => {
-    // dev->daus distance 2, threshold(3)=1: outside match, inside near-miss
-    expect(isNearMissSurname(dtc as any, 'Dev')).toBe(true);
-  });
-  test('Eastwood is nowhere near anyone (the genuinely-new class)', () => {
-    expect(isNearMissSurname(dtc as any, 'Eastwood')).toBe(false);
+describe('near-miss helper (retained, UNUSED in guidance since 2026-08-16)', () => {
+  // Live falsification: "Borth" flagged near-miss because it sits distance 3
+  // from "Bob" - short names make everything close. The Tom-Dev protection
+  // lives in S5 (exact-first sole-candidate lock), so guidance now goes
+  // straight to CLEAR_NEW for every unmatched name.
+  test('the helper still computes distances', () => {
     expect(nearestSurnameDistance(dtc as any, 'Eastwood')).toBeGreaterThan(4);
-  });
-  test('an exact match is not a near-miss (it matches)', () => {
     expect(isNearMissSurname(dtc as any, 'Daus')).toBe(false);
   });
-  test('empty surname is never a near-miss', () => {
-    expect(isNearMissSurname(dtc as any, '')).toBe(false);
+  test('the live false-positive: Borth vs a roster containing Bob', () => {
+    const roster=[...dtc, { id: 9, firstName: 'Billy', lastName: 'Bob', companyID: 1769 }];
+    expect(isNearMissSurname(roster as any, 'Borth')).toBe(true); // why it was removed
   });
 });
 
