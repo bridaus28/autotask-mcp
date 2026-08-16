@@ -1471,6 +1471,16 @@ export class AutotaskMcpServer {
               ? [effectiveFirstName, effectiveLastName].filter(Boolean).join(' ') || 'Unknown Caller'
               : null;
             const callerPhone = phoneCall.external_number || dynVars.caller_phone || 'Unknown';
+            // B1 (2026-08-16, Brian): carrier-lookup intel into closure artifacts.
+            // The webhook has seeded these since v21 fixed the CNAM parsing bug;
+            // nothing downstream consumed them. For unknown callers this is the
+            // difference between "[Unverified] +19099928054" and a name a human
+            // can act on -- and caller type + line type let the team sort
+            // spam/sales from real callers at a glance, after the fact.
+            const cnamName = String(dynVars.caller_name_lookup || '').trim();
+            const cnamType = String(dynVars.caller_type_lookup || '').trim();
+            const cnamLineType = String(dynVars.line_type || '').trim();
+            const cnamCarrier = String(dynVars.line_type_carrier || '').trim();
             const durationSecs = metadata.call_duration_secs || null;
             const durationStr = durationSecs != null ? `${Math.ceil(durationSecs / 60)} min (${durationSecs}s)` : 'Unknown';
             const summary = analysis.transcript_summary || 'No summary available.';
@@ -1500,7 +1510,8 @@ export class AutotaskMcpServer {
               const coLabel = effectiveCompanyName || `Company ${effectiveCompanyId}`;
               title = `[Unverified] ${coLabel} - ${subjectClause}`.substring(0, 255);
             } else {
-              title = `[Unverified] ${callerPhone} - ${subjectClause}`.substring(0, 255);
+              const unidLabel = cnamName ? `${cnamName} ${callerPhone}` : callerPhone;
+              title = `[Unverified] ${unidLabel} - ${subjectClause}`.substring(0, 255);
             }
 
             const callerLine = fullyIdentified
@@ -1517,6 +1528,9 @@ export class AutotaskMcpServer {
               `Call Reason: ${callReason}`,
               callerLine,
               `Caller Phone: ${callerPhone}`,
+              cnamName ? `Caller ID Name (CNAM): ${cnamName}` : null,
+              cnamType ? `Caller Type: ${cnamType}` : null,
+              (cnamLineType || cnamCarrier) ? `Line: ${[cnamLineType, cnamCarrier].filter(Boolean).join(' - ')}` : null,
               `Duration: ${durationStr}`,
               `Business Status: ${businessStatus}`,
               transferredTo ? `Transferred To: ${transferredTo}` : null,
