@@ -190,3 +190,51 @@ describe('B14 create_company dedupe', () => {
     expect(createdCompanies.length).toBe(1);
   });
 });
+
+// ─── B15: company web domain from contact email (2026-08-17) ────────────────
+// Each test uses a unique contact name: the module-level replay memo would
+// otherwise short-circuit every test after the first. co.phone matches the
+// callerPhone so the tie gate admits the create.
+describe('B15 domain from email', () => {
+  const mk = (co: any) => {
+    const { handler, created } = makeHandler();
+    const updates: any[] = [];
+    (handler as any)['autotaskService'].getCompany = async () => ({ phone: '+1 562-202-5244', ...co });
+    (handler as any)['autotaskService'].updateCompany = async (_id: number, u: any) => { updates.push(u); };
+    return { handler, created, updates };
+  };
+  const args = (last: string) => ({ companyID: RD_RUBBER, firstName: 'Web', lastName: last, callerPhone: '+15622025244' });
+
+  test('custom domain fills an empty webAddress', async () => {
+    const { handler, updates } = mk({ id: RD_RUBBER, webAddress: '', classification: 17 });
+    await call(handler, { ...args('Alpha'), emailAddress: 'web@rdrubber.com' });
+    expect(updates).toEqual([{ webAddress: 'rdrubber.com' }]);
+  });
+  test('freemail domain writes nothing', async () => {
+    const { handler, updates } = mk({ id: RD_RUBBER, webAddress: '', classification: 17 });
+    await call(handler, { ...args('Bravo'), emailAddress: 'web@gmail.com' });
+    expect(updates).toEqual([]);
+  });
+  test('existing webAddress is never overwritten', async () => {
+    const { handler, updates } = mk({ id: RD_RUBBER, webAddress: 'rdrubber.com', classification: 17 });
+    await call(handler, { ...args('Charlie'), emailAddress: 'web@otherdomain.com' });
+    expect(updates).toEqual([]);
+  });
+  test('residential accounts never get a web domain', async () => {
+    const { handler, updates } = mk({ id: RD_RUBBER, webAddress: '', classification: 13 });
+    await call(handler, { ...args('Delta'), emailAddress: 'web@familybiz.com' });
+    expect(updates).toEqual([]);
+  });
+  test('no email, no lookup, create still succeeds', async () => {
+    const { handler, created, updates } = mk({ id: RD_RUBBER, webAddress: '' });
+    await call(handler, args('Echo'));
+    expect(created.length).toBe(1);
+    expect(updates).toEqual([]);
+  });
+  test('domain-write failure never disturbs the create', async () => {
+    const { handler, created } = makeHandler();
+    (handler as any)['autotaskService'].getCompany = async () => { throw new Error('down'); };
+    await call(handler, { ...args('Foxtrot'), emailAddress: 'web@rdrubber.com' });
+    expect(created.length).toBe(1);
+  });
+});

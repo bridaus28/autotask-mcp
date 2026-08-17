@@ -108,6 +108,15 @@ const SKIP_ENHANCEMENT_TOOLS = new Set([
   'autotask_get_contact',
 ]);
 
+// B15: domains that identify a PERSON, not a company. A contact email on one
+// of these never becomes an account's web domain.
+const FREEMAIL_DOMAINS = new Set<string>([
+  'gmail.com','yahoo.com','ymail.com','hotmail.com','outlook.com','aol.com',
+  'icloud.com','me.com','mac.com','msn.com','live.com','protonmail.com','proton.me',
+  'gmx.com','mail.com','comcast.net','att.net','sbcglobal.net','verizon.net',
+  'cox.net','charter.net','roadrunner.com','earthlink.net','pacbell.net',
+]);
+
 export class AutotaskToolHandler {
   protected autotaskService: AutotaskService;
   protected logger: Logger;
@@ -636,6 +645,24 @@ export class AutotaskToolHandler {
           a.receivesEmailNotifications = false;
         }
         const id = await s.createContact(a);
+        // ── B15 (2026-08-17, Brian): company web domain from the contact's email ─
+        // The web field maps inbound emailers to the account. One spelled email
+        // yields two facts: the contact's address and, when the domain is not a
+        // free-mail provider, the company's domain. Written ONLY when the
+        // company's webAddress is empty (never overwrites) and never for
+        // residential accounts (classification 13). Best-effort: any failure
+        // here must not disturb the contact create that already succeeded.
+        try {
+          const dom = String(a.emailAddress ?? '').split('@')[1]?.trim().toLowerCase();
+          if (dom && !FREEMAIL_DOMAINS.has(dom) && a.companyID != null) {
+            const co: any = await s.getCompany(Number(a.companyID));
+            const web = String(co?.webAddress ?? '').trim();
+            if (co && !web && Number(co.classification) !== 13) {
+              await s.updateCompany(Number(a.companyID), { webAddress: dom } as any);
+              this.logger.info('B15: company webAddress set from contact email domain', { companyID: a.companyID, domain: dom });
+            }
+          }
+        } catch { /* domain mapping is a bonus, never a blocker */ }
         const outcome = { result: id, message: `Successfully created contact with ID: ${id}` };
         RECENT_CREATES.record(replayKey, outcome);
         return outcome;
