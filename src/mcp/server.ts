@@ -1245,6 +1245,27 @@ export class AutotaskMcpServer {
               return;
             }
 
+            // ── B17 (2026-08-17): transfers exist only while the business is open ─
+            // Production tests broke the prompt's after-hours rule twice in one
+            // night: a pressured "connect me to someone NOW" and a critical-server
+            // call both REFERred to 8002 on a closed Sunday, ringing an empty
+            // queue. A prompt rule loses to caller pressure; this gate cannot.
+            // The 24x7 escalation path will get its own sanctioned mechanism
+            // (Escalate to MC); until then a closed business routes nothing.
+            try {
+              const biz = await this.autotaskService.getBusinessStatus();
+              if (String(biz.business_status).toLowerCase() !== 'open') {
+                this.logger.warn('resolve-extension: refused, business closed', { ext, status: biz.business_status });
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  sip_uri: '',
+                  extension: ext,
+                  status: 'after_hours',
+                  message: `The business is ${biz.business_status}, so no one is at any extension and transfers do not run. Take a message or open a ticket, and promise only what the coverage allows. Next open: ${biz.next_open_text}.`,
+                }));
+                return;
+              }
+            } catch { /* status lookup failure falls through: an open-hours outage must not block transfers */ }
             const sipUri = `sip:${ext}@cvit.bvoip.net`;
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ sip_uri: sipUri, extension: ext, status: 'ok' }));

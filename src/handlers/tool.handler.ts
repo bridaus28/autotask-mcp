@@ -663,7 +663,14 @@ export class AutotaskToolHandler {
             }
           }
         } catch { /* domain mapping is a bonus, never a blocker */ }
-        const outcome = { result: id, message: `Successfully created contact with ID: ${id}` };
+        // B18 (2026-08-17): the email ask lives in the KB but production test 1
+        // showed it being skipped at the moment of creation. Say it at the moment
+        // of decision, the channel that provably reaches her. A decline is fine
+        // and needs no retry; this fires only when no email arrived at all.
+        const emailNudge = a.emailAddress
+          ? ''
+          : ' Created without an email address. If the caller has not been asked yet, offer once to take their email; a decline is fine and the record stands.';
+        const outcome = { result: id, message: `Successfully created contact with ID: ${id}.${emailNudge}` };
         RECENT_CREATES.record(replayKey, outcome);
         return outcome;
       }],
