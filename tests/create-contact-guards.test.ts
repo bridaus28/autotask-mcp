@@ -164,3 +164,29 @@ describe('S3 roster-dump refusal', () => {
     expect(JSON.stringify(r)).toContain('\\"returned\\":1');
   });
 });
+
+// ─── B14: create_company phone-first dedupe (2026-08-17) ────────────────────
+describe('B14 create_company dedupe', () => {
+
+  test('returns the existing company on a phone match instead of creating', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    (handler as any)['autotaskService'].searchCompanies = async (q: any) =>
+      q.phone ? [{ id: 175, companyName: 'Test Billing Company', isActive: 1 }] : [];
+    const r: any = await callCo(handler, { companyName: 'Ivy Dedupe Probe Co', phone: '1 909-599-5058', customer_type: 'business' });
+    expect(text(r)).toContain('existing_company');
+    expect(text(r)).toContain('175');
+    expect(createdCompanies.length).toBe(0);
+  });
+  test('creates when nothing matches', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    (handler as any)['autotaskService'].searchCompanies = async () => [];
+    await callCo(handler, { companyName: 'Genuinely New Co', phone: '909-555-0000', customer_type: 'business' });
+    expect(createdCompanies.length).toBe(1);
+  });
+  test('lookup failure falls through to create', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    (handler as any)['autotaskService'].searchCompanies = async () => { throw new Error('down'); };
+    await callCo(handler, { companyName: 'Fallthrough Co', phone: '909-555-0001', customer_type: 'business' });
+    expect(createdCompanies.length).toBe(1);
+  });
+});

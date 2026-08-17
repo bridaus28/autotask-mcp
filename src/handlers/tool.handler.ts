@@ -372,6 +372,28 @@ export class AutotaskToolHandler {
         const coKey = RecentWrites.key('company', { companyName: rest.companyName, phone: phoneDigits });
         const coReplay = RECENT_CREATES.check(coKey);
         if (coReplay !== undefined) return coReplay;
+        // ── B14 (2026-08-17): phone-first dedupe against Autotask itself ────
+        // The KB has said "the server dedupes by phone first, then name" since
+        // v2; until today only the same-call replay memo existed, and the
+        // master test proved it: an exact-phone duplicate (probe co 7700
+        // against co 175) sailed through. A company already holding this
+        // phone IS this caller's account; return it instead of duplicating.
+        // Exact-name match backs the phone check for number-less accounts.
+        try {
+          const byPhone = await s.searchCompanies({ phone: phoneDigits } as any);
+          const hit = (byPhone || []).find((c: any) => c.isActive !== 0 && c.isActive !== false)
+            || (byPhone || [])[0]
+            || (await s.searchCompanies({ searchTerm: rest.companyName } as any) || [])
+               .find((c: any) => String(c.companyName ?? '').trim().toLowerCase() === String(rest.companyName ?? '').trim().toLowerCase());
+          if (hit) {
+            const dedupe = {
+              result: { status: 'existing_company', created: false, id: hit.id, companyName: hit.companyName ?? null },
+              message: `Not created. An account already holds this phone or name: "${hit.companyName}" (id ${hit.id}). Use that account for this caller; a technician can merge or correct records later.`,
+            };
+            RECENT_CREATES.record(coKey, dedupe);
+            return dedupe;
+          }
+        } catch { /* dedupe is best-effort; a lookup failure falls through to create */ }
         const id = await s.createCompany(rest);
         const coOutcome = { result: id, message: `Successfully created company with ID: ${id}` };
         RECENT_CREATES.record(coKey, coOutcome);
