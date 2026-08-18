@@ -509,7 +509,14 @@ export class AutotaskMcpServer {
                   if (cidT.length === 1) {
                     const poolT = await this.autotaskService.searchContacts({ companyID: cidT[0], pageSize: 200 } as any) as PoolContact[];
                     const vT = matchSpokenName(poolT || [], spokenFirst, spokenLast);
-                    if (vT.status === 'locked' || (vT.status === 'candidates' && vT.count >= 1)) techHit = null;
+                    // Vouch requires a REAL full-name lock, unlike the placeholder
+                    // guard's looser shape. Proven live 2026-08-17 (acceptance A1):
+                    // "Jason Miller" at OES produced candidate Jason Cooper --
+                    // exact FIRST name, wrong surname -- and candidates>=1 stood
+                    // the guard down, recreating the wrong-person lock the guard
+                    // exists to stop. A first-name candidate is not "a contact by
+                    // that name"; only a locked full-name match is.
+                    if (vT.status === 'locked') techHit = null;
                   }
                 } catch { /* stay on the redirect; it is the safe side */ }
               }
