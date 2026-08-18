@@ -418,3 +418,91 @@ export const TECH_NAME_GUIDANCE =
   'have your name?" so the record shows who called, then lock again with the ' +
   'caller\'s own name. If they answer with this same name, it is their own ' +
   '\u2014 the next lock will accept it.';
+
+// ─── Who-is-who completion (2026-08-18, Brian) ───────────────────────────────
+// The rule the whole system now follows: a name never becomes a fact -- never
+// filed, never spoken -- until it has been checked against both lists (our
+// ~10-tech roster, and the contacts at the caller's account). Language picks
+// which check runs first; it never finalizes. A wrong guess costs one
+// clarifying question, not a wrong name in Autotask or said aloud.
+
+/**
+ * Lone FIRST name that uniquely matches a tech's first name. Exact-normalized
+ * only, and only meaningful when the lock has ALREADY failed to find the
+ * caller (no_record / new_contact): an unknown caller whose single offered
+ * word is one of our techs' first names is far more likely asking FOR them
+ * ("Calling for Brian", 2026-08-18 09:50 -- caller lost after being filed as
+ * a Brian we did not have). Never consulted when a lock succeeds, so
+ * first-name locks (a third of all locks, S5) are untouched by construction.
+ */
+export function loneFirstTechMatch(
+  spokenFirst: string | null | undefined,
+  spokenLast: string | null | undefined,
+  roster: RosterTech[],
+): RosterTech | null {
+  const f = norm(spokenFirst);
+  const l = norm(spokenLast);
+  if (!f || l) return null;                      // lone first names only
+  const hits = roster.filter(t => norm(t?.firstName) === f);
+  return hits.length === 1 ? hits[0] : null;      // unique, or stay silent
+}
+
+export function targetOrSelfGuidance(first: string): string {
+  const n = String(first || 'that person').trim();
+  return `No record was found for the caller, and "${n}" is also the first name of a member ` +
+    `of our team. Ask: "Just to be sure — are you trying to reach ${n}, or is ${n} your ` +
+    `name?" To reach ${n}, use the tech-status tool. If it is the caller's own name, ask for ` +
+    `their last name and call this tool again with it.`;
+}
+
+export function bothListsGuidance(fullName: string): string {
+  const n = String(fullName || 'that name').trim();
+  return `"${n}" is both a member of our team and a contact at this account. Ask: "Is that ` +
+    `your name, or the person you're trying to reach?" If it is the caller's own name, call ` +
+    `this tool again with the same name and it will be accepted. To reach our ${n}, use the ` +
+    `tech-status tool.`;
+}
+
+/**
+ * The home-or-business seam, business side. "Home"-shaped answers already
+ * resolve (matchSpokenCompany's residential regex). A "business"-shaped
+ * answer is an ANSWER to the binary, not a company name -- matching it
+ * against company names returned company_no_match on 2/2 organic attempts
+ * (2026-08-17 08:49, 13:39). Whole-answer match only, so real company names
+ * containing these words ("Innovative Display Works") are unaffected.
+ */
+const BUSINESS_LITERAL = new Set([
+  'business', 'a business', 'my business', 'the business', 'its a business', 'it is a business',
+  'for business', 'business account', 'work', 'for work', 'my work', 'office', 'the office',
+  'my office', 'company', 'a company', 'my company', 'the company', 'yes business',
+]);
+export function isBusinessLiteralAnswer(s: string | null | undefined): boolean {
+  const n = String(s ?? '').toLowerCase().replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return BUSINESS_LITERAL.has(n);
+}
+
+export const BUSINESS_LITERAL_GUIDANCE =
+  'Good — it is a business. Ask: "What is the company name?" and call this tool again ' +
+  'passing the answer verbatim as spoken_company.';
+
+export const AMBIGUOUS_COMPANY_BINARY_GUIDANCE =
+  'This phone is on file at more than one account, so no spoken name can resolve it. Ask ' +
+  'exactly: "Is this for your home or your business?" For home, call this tool again with ' +
+  'spoken_company set to "not a company". For business, ask the company name and pass the ' +
+  'answer verbatim as spoken_company. Two attempts maximum, then help the caller anyway and ' +
+  'record the call as UNVERIFIED INTAKE on companyID 0.';
+
+/** Exact-normalized full-name equality with a roster tech. The both-lists
+ * question is only asked when the names genuinely collide to a human ear:
+ * replay of 515 real lock calls (2026-08-18) found "Aaron Mills" -- a real
+ * customer, exact contact lock -- inside fuzzy range of Jason Miller. Fuzzy
+ * resemblance + an exact contact lock means the contact wins silently. */
+export function spokenEqualsTech(
+  spokenFirst: string | null | undefined,
+  spokenLast: string | null | undefined,
+  tech: RosterTech | null | undefined,
+): boolean {
+  if (!tech) return false;
+  const f = norm(spokenFirst), l = norm(spokenLast);
+  return Boolean(f && l && f === norm(tech.firstName) && l === norm(tech.lastName));
+}

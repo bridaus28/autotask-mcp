@@ -840,6 +840,7 @@ export class AutotaskToolHandler {
           [t.firstName, t.lastName, `${t.firstName || ''}${t.lastName || ''}`].map(norm).filter(Boolean);
         const distanceTo = (t: any): number => Math.min(...nameFields(t).map(f => editDistance(term, f)));
 
+        let matchedFuzzy = false;
         let matches = roster.filter((t: any) => nameFields(t).includes(term));
         if (matches.length === 0 && term.length >= 3) {
           const maxDist = term.length <= 4 ? 1 : 2;
@@ -849,16 +850,26 @@ export class AutotaskToolHandler {
             .sort((x: any, y: any) => x.d - y.d);
           if (scored.length === 1 || (scored.length > 1 && scored[0].d < scored[1].d)) {
             matches = [scored[0].t];
+            matchedFuzzy = true;
           } else if (scored.length > 1) {
             return { result: { status: 'ambiguous', count: scored.length }, message: `${scored.length} close matches \u2014 need more info` };
           }
         }
 
         if (matches.length === 0) {
-          return { result: { status: 'no_match', searchTerm: searchTerm.trim() }, message: `No tech matched "${searchTerm.trim()}"` };
+          // Affirmative-only (CVIT best practice, Brian 2026-08-17): no roster
+          // claims in either direction -- departed staff stay undisclosed and
+          // a matcher miss on a current tech never becomes a spoken denial.
+          return { result: {
+            status: 'no_match', searchTerm: searchTerm.trim(),
+            guidance: 'Say: "Let me connect you with the team that can help, and they can route you from there." Route by the caller\'s need, or offer to take a message.',
+          }, message: `No tech matched "${searchTerm.trim()}"` };
         }
         if (matches.length > 1) {
-          return { result: { status: 'ambiguous', count: matches.length }, message: `${matches.length} matches \u2014 need more info` };
+          return { result: {
+            status: 'ambiguous', count: matches.length,
+            guidance: 'More than one team member matches. Ask for their full name or which team they are on, then search again.',
+          }, message: `${matches.length} matches — need more info` };
         }
 
         // Single match
@@ -869,6 +880,33 @@ export class AutotaskToolHandler {
 
         if (!ext) {
           return { result: { status: 'no_extension', name, title }, message: 'Tech found but not phone-routable' };
+        }
+
+        // Who-is-who bundle (2026-08-18, Brian): the response carries the
+        // CANONICAL roster name, the verified extension, and the line to say,
+        // so nothing downstream is re-derived from what was heard. matchedFuzzy
+        // adds a confirm-first step -- she confirms with the ROSTER spelling.
+        // Business hours ride along so an after-hours transfer offer is never
+        // generated (offer-then-retract, Brian's 08-17 19:16 test). Fail-open:
+        // an unknown business status behaves exactly like today.
+        const confirmFirst = matchedFuzzy
+          ? `Confirm first: "You're looking to reach ${name}, correct?" Then `
+          : '';
+        let bizClosed = false; let nextOpen = '';
+        try {
+          const biz = await s.getBusinessStatus();
+          bizClosed = Boolean(biz && biz.business_status && biz.business_status !== 'open');
+          nextOpen = (biz && biz.next_open_text) || '';
+        } catch { bizClosed = false; }
+        if (bizClosed) {
+          return { result: {
+            status: 'after_hours', name, title, officeExtension: ext,
+            matched: matchedFuzzy ? 'fuzzy' : 'exact',
+            next_open_text: nextOpen || null,
+            guidance: `The office is closed, so a transfer to ${name} will not connect. ` +
+              `${confirmFirst}offer: "${name} is gone for the day — I can add a note so they follow up ` +
+              `when we reopen${nextOpen ? ' ' + nextOpen : ''}, or if this is an emergency I can reach our on-call support."`,
+          }, message: `Office closed — ${name} not reachable until ${nextOpen || 'next open'}` };
         }
 
         // Step 2: presence-service
@@ -896,7 +934,13 @@ export class AutotaskToolHandler {
           const data: any = await r.json();
           const isAvailable = data.available === true;
           return {
-            result: { status: isAvailable ? 'available' : 'not_available', name, title, officeExtension: ext, available: isAvailable },
+            result: {
+              status: isAvailable ? 'available' : 'not_available', name, title, officeExtension: ext, available: isAvailable,
+              matched: matchedFuzzy ? 'fuzzy' : 'exact',
+              guidance: isAvailable
+                ? `${confirmFirst}say: "Connecting you to ${name} now." Use resolve_transfer_extension with extension ${ext} and transfer.`
+                : `${confirmFirst}offer: "${name} isn't available right now — I can add a note to your ticket, take a message, or connect you with the support queue."`,
+            },
             message: `Tech ${name} is ${isAvailable ? 'available' : 'not available'}`
           };
         } catch (err) {

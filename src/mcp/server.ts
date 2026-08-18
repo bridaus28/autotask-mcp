@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE, spokenEqualsTech } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -516,7 +516,32 @@ export class AutotaskMcpServer {
                     // the guard down, recreating the wrong-person lock the guard
                     // exists to stop. A first-name candidate is not "a contact by
                     // that name"; only a locked full-name match is.
-                    if (vT.status === 'locked') techHit = null;
+                    //
+                    // 2026-08-18 (Brian): a full-name lock no longer stands the
+                    // guard down SILENTLY -- that is the both-lists collision
+                    // (a real contact here shares a tech's name), and silently
+                    // resolving it to "caller" was the last place a wrong guess
+                    // could slip through. The caller adjudicates instead; a
+                    // repeat of the same name bypasses the guard entirely and
+                    // locks, so one question is the whole cost.
+                    if (vT.status === 'locked') {
+                      // Replay refinement (2026-08-18, 515 calls): only a
+                      // genuine collision earns the question. "Aaron Mills"
+                      // exact-locked a real customer while sitting in fuzzy
+                      // range of Jason Miller -- no human hears those as the
+                      // same name. Exact tech match -> ask; fuzzy resemblance
+                      // -> the exact contact lock wins silently, as today.
+                      if (spokenEqualsTech(spokenFirst, spokenLast, techHit)) {
+                        this.logger.info('Contact lock: name is on BOTH lists (tech roster + account contact); asking the caller', { spokenFirst, spokenLast });
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({
+                          status: 'no_name_yet',
+                          guidance: bothListsGuidance(`${spokenFirst} ${spokenLast}`.trim()),
+                        }));
+                        return;
+                      }
+                      techHit = null;
+                    }
                   }
                 } catch { /* stay on the redirect; it is the safe side */ }
               }
@@ -534,6 +559,23 @@ export class AutotaskMcpServer {
                 return;
               }
             }
+
+            // Lone-first extension (2026-08-18, the "Calling for Brian" case,
+            // 09:50 that morning -- caller filed as a Brian we did not have,
+            // called back, gave up). Consulted ONLY at the two dead ends
+            // (no_record / new_contact), never on a successful lock, so
+            // first-name locks and S5 are untouched by construction. Replayed
+            // against 3.5 weeks of traffic: every non-test hit was a target
+            // request or staff, zero confirmed customers named after a tech.
+            // Unique roster first-name match, exact only, repeat bypasses.
+            const loneFirstRedirect = async (): Promise<string | null> => {
+              if (parsed.contact_id || priorIdenticalAttempts > 0) return null;
+              if (!spokenFirst || spokenLast) return null;
+              try {
+                const t = loneFirstTechMatch(spokenFirst, spokenLast, await this.getTechRoster());
+                return t ? targetOrSelfGuidance(String(t.firstName || spokenFirst)) : null;
+              } catch { return null; }
+            };
 
             // callerPhone alone now enters here. Until 2026-08-06 it did not, so a
             // call carrying only the phone fell through to the contact_id parser and
@@ -597,6 +639,7 @@ export class AutotaskMcpServer {
                     res.end(JSON.stringify({
                       status: 'locked', match: verdict.match, contact_id: c.id,
                       company_id: c.companyID ?? knownCompanyID,
+                      company_name: await this.companyNameOf(c.companyID ?? knownCompanyID),
                       first_name: c.firstName ?? null, last_name: c.lastName ?? null,
                       goes_by: (c as any).middleInitial || null,
                       is_primary: (c as any).primaryContact ?? false,
@@ -610,6 +653,7 @@ export class AutotaskMcpServer {
                       res.end(JSON.stringify({
                         status: 'locked', match: 'sole_candidate', contact_id: soleA.id,
                         company_id: soleA.companyID ?? knownCompanyID,
+                        company_name: await this.companyNameOf(soleA.companyID ?? knownCompanyID),
                         first_name: soleA.firstName ?? null, last_name: soleA.lastName ?? null,
                         goes_by: (soleA as any).middleInitial || null,
                         is_primary: (soleA as any).primaryContact ?? false,
@@ -651,6 +695,11 @@ export class AutotaskMcpServer {
                   // "Innovative DisplayWorks Inc. (IDW)": she created 6866 as a duplicate.
                   // What to do about an unknown phone is the consumer's policy, not this
                   // endpoint's, so it is no longer stated here.
+                  const gLone = await loneFirstRedirect();
+                  if (gLone) {
+                    res.end(JSON.stringify({ status: 'no_name_yet', guidance: gLone }));
+                    return;
+                  }
                   res.end(JSON.stringify({ status: 'no_record', checked: 'caller_phone' }));
                   return;
                 }
@@ -659,6 +708,22 @@ export class AutotaskMcpServer {
                   // Match it here so the candidate names never have to be sent to
                   // the agent -- she cannot read out a list she was never given.
                   // See company-match.ts for the disclosure measurements.
+                  //
+                  // Seam fix (2026-08-18): "Business" is an ANSWER to the
+                  // home-or-business binary, not a company name. Matching it
+                  // against company names went company_no_match on 2/2 organic
+                  // attempts (08-17 08:49, 13:39) and burned a turn re-asking.
+                  // "Home"-shaped answers already resolve via the residential
+                  // regex in matchSpokenCompany; this is the other half.
+                  if (spokenCompany && isBusinessLiteralAnswer(spokenCompany)) {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                      status: 'ambiguous_company',
+                      company_count: companyIds.length,
+                      guidance: BUSINESS_LITERAL_GUIDANCE,
+                    }));
+                    return;
+                  }
                   if (spokenCompany) {
                     const byCompany = new Map<number, { name: string | null; classification: string | null }>();
                     await Promise.all([...new Set(companyIds)].map(async (cid) => {
@@ -693,6 +758,7 @@ export class AutotaskMcpServer {
                         match: `company_${cv.via}`,
                         contact_id: cand.contactId,
                         company_id: cand.companyId,
+                        company_name: cand.companyId != null ? (byCompany.get(cand.companyId)?.name ?? null) : null,
                         first_name: full?.firstName ?? null,
                         last_name: full?.lastName ?? null,
                         goes_by: full?.middleInitial || null,
@@ -729,7 +795,10 @@ export class AutotaskMcpServer {
                   res.end(JSON.stringify({
                     status: 'ambiguous_company',
                     company_count: companyIds.length,
-                    guidance: 'This phone is on file at more than one company, so no spoken name can resolve it. Ask the caller: "What company are you calling for?" then call this tool AGAIN passing their answer verbatim as spoken_company. The server matches it; you are not given the candidate names and must never guess or offer one. If the caller says it is personal, pass that answer through too. Two attempts maximum, then stop asking, help them anyway, and record it as UNVERIFIED INTAKE on companyID 0.',
+                    // Aligned 2026-08-18 with the webhook's home-or-business
+                    // binary (C1-class conflict: this text still carried the
+                    // old open question while caller_context asked the binary).
+                    guidance: AMBIGUOUS_COMPANY_BINARY_GUIDANCE,
                   }));
                   return;
                 }
@@ -762,6 +831,7 @@ export class AutotaskMcpServer {
                     match: verdict.match,
                     contact_id: c.id,
                     company_id: c.companyID ?? companyID,
+                    company_name: await this.companyNameOf(c.companyID ?? companyID),
                     first_name: c.firstName ?? null,
                     last_name: c.lastName ?? null,
                     // Nickname the caller may actually go by (CV convention:
@@ -783,6 +853,7 @@ export class AutotaskMcpServer {
                     res.end(JSON.stringify({
                       status: 'locked', match: 'sole_candidate', contact_id: soleB.id,
                       company_id: soleB.companyID ?? companyID,
+                      company_name: await this.companyNameOf(soleB.companyID ?? companyID),
                       first_name: soleB.firstName ?? null, last_name: soleB.lastName ?? null,
                       goes_by: (soleB as any).middleInitial || null,
                       is_primary: (soleB as any).primaryContact ?? false,
@@ -807,6 +878,18 @@ export class AutotaskMcpServer {
                 // confirm the name before offering to add anyone. The old wording
                 // ("offer Identity Capture per the SOP") sent her straight to
                 // "would you like me to add you as a contact?" on 08-06 10:18.
+                // Replay note (2026-08-18): a first pass restricted this site
+                // after 5 apparent false positives. Transcript audit reversed
+                // it: 2 were Brian's test line, 2 were TRUE target requests
+                // ("Connect me with Hector" / "I'd like to speak to Tina")
+                // that the lock had double-filed, 1 was staff. Zero confirmed
+                // customers named after a tech in 3.5 weeks -- the redirect
+                // stays live here, and a real Hector pays one bounded question.
+                const gLone2 = await loneFirstRedirect();
+                if (gLone2) {
+                  res.end(JSON.stringify({ status: 'no_name_yet', company_id: companyID, guidance: gLone2 }));
+                  return;
+                }
                 res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance:
                   orgShapedLast ? ORG_SURNAME_GUIDANCE
                   : priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE : CLEAR_NEW_GUIDANCE }));
@@ -869,6 +952,7 @@ export class AutotaskMcpServer {
               match: 'id',
               contact_id: contact.id ?? contactId,
               company_id: contact.companyID ?? null,
+              company_name: await this.companyNameOf(contact.companyID),
               first_name: contact.firstName ?? null,
               last_name: contact.lastName ?? null,
               goes_by: (contact as any).middleInitial || null,
@@ -1952,6 +2036,22 @@ export class AutotaskMcpServer {
     const roster = (allActive || []).filter((t: any) => t.officeExtension && String(t.officeExtension).trim() !== '') as RosterTech[];
     this.techRosterCache = { at: Date.now(), roster };
     return roster;
+  }
+
+  // company_name on locked responses (2026-08-18, Brian-approved batch): she
+  // confirms the account from the RECORD, never from ASR or the caller's
+  // assertion -- the Povina / Innovative Display Works class. Fail-soft null.
+  private companyNameCache = new Map<number, { at: number; name: string | null }>();
+  private async companyNameOf(companyID: number | null | undefined): Promise<string | null> {
+    const id = Number(companyID);
+    if (!Number.isFinite(id) || id <= 0) return null;
+    const TTL = 10 * 60 * 1000;
+    const hit = this.companyNameCache.get(id);
+    if (hit && Date.now() - hit.at < TTL) return hit.name;
+    let name: string | null = null;
+    try { name = (await this.autotaskService.getCompany(id))?.companyName ?? null; } catch { name = null; }
+    this.companyNameCache.set(id, { at: Date.now(), name });
+    return name;
   }
 
   private extractGatewayCredentials(req: IncomingMessage): GatewayCredentials {
