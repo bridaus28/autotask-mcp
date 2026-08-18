@@ -358,3 +358,63 @@ export function isNearMissSurname(pool: PoolContact[], spokenLast?: string | nul
   const t = threshold(l);
   return d > t && d <= t + 2;
 }
+
+// ─── Tech-name guard: the caller gave OUR OWN tech's name to the lock ────────
+// (2026-08-17.) Measured cost: Kim Braun (OES) asked "Can I speak to Jason
+// Miller?" on 2026-08-03 14:27 and the lock received {"spoken_first":"Jason",
+// "spoken_last":"Miller"} -- the person she wanted to REACH, not the person
+// speaking. 68 seconds and a spelling detour later she repeated the request
+// verbatim. Same defect class as conv_1701 (08-12), where the caller said
+// "Mark Salipour" meaning the target and was then addressed as Mark.
+//
+// The lock is for the person SPEAKING. When the submitted name is one of our
+// own phone-routable techs, the overwhelmingly likely reading is "that is who
+// they want", so the guard redirects instead of matching. Exact-normalized
+// match on BOTH names, nothing fuzzy: firing this on a mishearing would block
+// a real caller, and a full first+last collision with the roster by accident
+// is rare enough to handle via the pool-vouch exemption in the handler (a
+// genuine customer named Jason Miller exists at the caller's company -> the
+// guard stands down, same shape as the placeholder guard's exemption).
+export interface RosterTech {
+  firstName?: string | null;
+  lastName?: string | null;
+  officeExtension?: string | null;
+}
+
+export function spokenNameMatchesTech(
+  spokenFirst: string | null | undefined,
+  spokenLast: string | null | undefined,
+  roster: RosterTech[],
+): RosterTech | null {
+  const f = norm(spokenFirst);
+  const l = norm(spokenLast);
+  // Both names required: a bare "Jason" is an ordinary caller first name and
+  // the lock legitimately accepts it (a third of real locks are first-name
+  // only, and S5 depends on them). The misattribution signature -- every
+  // observed instance, 08-03 and conv_1701 -- is a FULL name arriving as the
+  // caller's identity. First-name-only tech requests were observed routing
+  // correctly to lookup_tech_status four times (05-28, 06-05, 08-17 x2).
+  if (!f || !l) return null;
+  // Bounded fuzzy on BOTH names, same thresholds lookup_tech_status uses
+  // (STT produced "Reina" for "Reyna" there; exact-only would miss "Millar"
+  // for "Miller" here). Joint requirement keeps accidental hits rare, and
+  // the handler's repeat stand-down breaks any false-positive loop: a caller
+  // who repeats the same name is claiming it as their own.
+  for (const t of roster) {
+    if (!t) continue;
+    const tf = norm(t.firstName);
+    const tl = norm(t.lastName);
+    if (!tf || !tl) continue;
+    if (editDistance(f, tf) <= threshold(tf) && editDistance(l, tl) <= threshold(tl)) return t;
+  }
+  return null;
+}
+
+// Affirmative-only by CVIT best practice: says what to do, not what to avoid.
+export const TECH_NAME_GUIDANCE =
+  'That is a member of our team, so treat this as the person the caller wants ' +
+  'to reach. Keep helping with exactly that: check availability with the ' +
+  'tech-status tool and arrange the transfer or a message. Ask "And may I ' +
+  'have your name?" so the record shows who called, then lock again with the ' +
+  'caller\'s own name. If they answer with this same name, it is their own ' +
+  '\u2014 the next lock will accept it.';

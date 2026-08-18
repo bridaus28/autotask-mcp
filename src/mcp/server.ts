@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -92,6 +92,10 @@ export class AutotaskMcpServer {
   private httpServer?: HttpServer;
   private picklistCache: PicklistCache;
   private repeatedLocks = new RepeatedLockAttempts();
+  // Tech-name guard (2026-08-17): phone-routable roster, cached so the lock
+  // does not pay a Resources query per call. Same roster definition as
+  // autotask_lookup_tech_status: active AND carries an officeExtension.
+  private techRosterCache: { at: number; roster: RosterTech[] } | null = null;
   private ticketPicklistIds: { statusNew: number; priorityNormal: number } | null = null;
 
   constructor(config: McpServerConfig, logger: Logger, envConfig?: EnvironmentConfig) {
@@ -472,6 +476,56 @@ export class AutotaskMcpServer {
                 guidance: NO_NAME_GUIDANCE,
               }));
               return;
+            }
+
+            // Tech-name guard (2026-08-17). Kim Braun (OES), 08-03 14:27: she
+            // asked to SPEAK TO Jason Miller and the lock received Jason
+            // Miller as HER name -- candidates, a spelling detour, and the
+            // request repeated verbatim 59 seconds after she first made it.
+            // The lock is for the person speaking; a submitted name that is
+            // one of our own phone-routable techs is read as the transfer
+            // target instead. Exemption, same shape as the placeholder
+            // guard's: a real contact by that name at the phone-matched
+            // company vouches for the caller and the guard stands down.
+            // Fail-open on any lookup error: no roster, no guard, today's
+            // behaviour exactly.
+            // Repeat stand-down (same S4 principle the candidates loop got):
+            // the guard asks for the caller's own name; a caller who answers
+            // with the SAME name is claiming it as their own. Redirecting a
+            // second time would be the byte-identical retry loop all over
+            // again, so on any repeat of the exact attempt the guard stands
+            // down and normal matching proceeds -- pool-vouch, new_contact
+            // flow, whatever the records say. One extra turn, bounded, never
+            // a loop.
+            if (!parsed.contact_id && spokenFirst && spokenLast && priorIdenticalAttempts === 0) {
+              let techHit: RosterTech | null = null;
+              try {
+                techHit = spokenNameMatchesTech(spokenFirst, spokenLast, await this.getTechRoster());
+              } catch { techHit = null; }
+              if (techHit && callerPhone) {
+                try {
+                  const pcT = await this.autotaskService.searchContacts({ phone: callerPhone }) as PoolContact[];
+                  const cidT = [...new Set((pcT || []).map(c => c.companyID).filter((x): x is number => x != null))];
+                  if (cidT.length === 1) {
+                    const poolT = await this.autotaskService.searchContacts({ companyID: cidT[0], pageSize: 200 } as any) as PoolContact[];
+                    const vT = matchSpokenName(poolT || [], spokenFirst, spokenLast);
+                    if (vT.status === 'locked' || (vT.status === 'candidates' && vT.count >= 1)) techHit = null;
+                  }
+                } catch { /* stay on the redirect; it is the safe side */ }
+              }
+              if (techHit) {
+                this.logger.info('Contact lock: spoken name is a phone-routable tech; redirecting to transfer flow', {
+                  spokenFirst, spokenLast,
+                });
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                // no_name_yet, not a new status: from the agent's side this IS
+                // the no-name state -- the KB already documents its exits.
+                res.end(JSON.stringify({
+                  status: 'no_name_yet',
+                  guidance: TECH_NAME_GUIDANCE,
+                }));
+                return;
+              }
             }
 
             // callerPhone alone now enters here. Until 2026-08-06 it did not, so a
@@ -1880,6 +1934,19 @@ export class AutotaskMcpServer {
   /**
    * Extract credentials from gateway-injected HTTP headers
    */
+  // Fail-open by design: a roster we cannot fetch simply means the guard is
+  // absent for that call, which is exactly today's behaviour.
+  private async getTechRoster(): Promise<RosterTech[]> {
+    const TTL_MS = 10 * 60 * 1000;
+    if (this.techRosterCache && Date.now() - this.techRosterCache.at < TTL_MS) {
+      return this.techRosterCache.roster;
+    }
+    const allActive = await this.autotaskService.searchResources({ isActive: true, pageSize: 100 } as any);
+    const roster = (allActive || []).filter((t: any) => t.officeExtension && String(t.officeExtension).trim() !== '') as RosterTech[];
+    this.techRosterCache = { at: Date.now(), roster };
+    return roster;
+  }
+
   private extractGatewayCredentials(req: IncomingMessage): GatewayCredentials {
     const headers = req.headers as Record<string, string | string[] | undefined>;
     return parseCredentialsFromHeaders(headers);
