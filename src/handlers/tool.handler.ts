@@ -803,7 +803,13 @@ export class AutotaskToolHandler {
               'of searching the roster.',
           };
         }
-        const r = await s.searchResources(a); return { result: r, message: `Found ${r.length} resources` };
+        const r = await s.searchResources(a);
+        // Zero on a multi-word term is usually a person being looked for by
+        // full name in the wrong tool (2026-08-20). Affirmative pointer only.
+        const msg = (r.length === 0 && String(a.searchTerm).trim().split(/\s+/).length >= 2)
+          ? `Found 0 resources. To reach a team member by name, use autotask_lookup_tech_status — it matches spoken names and reports availability.`
+          : `Found ${r.length} resources`;
+        return { result: r, message: msg };
       }],
       ['autotask_lookup_tech_status', async (a) => {
         const searchTerm = a.searchTerm;

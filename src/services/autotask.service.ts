@@ -996,14 +996,28 @@ export class AutotaskService {
       const filters: any[] = [];
 
       if (options.searchTerm) {
-        filters.push({
-          op: 'or',
-          items: [
-            { op: 'contains', field: 'email', value: options.searchTerm },
-            { op: 'contains', field: 'firstName', value: options.searchTerm },
-            { op: 'contains', field: 'lastName', value: options.searchTerm }
-          ]
-        });
+        const term = String(options.searchTerm).trim();
+        const orItems: any[] = [
+          { op: 'contains', field: 'email', value: term },
+          { op: 'contains', field: 'firstName', value: term },
+          { op: 'contains', field: 'lastName', value: term }
+        ];
+        // Full-name blind spot (2026-08-20, conv_0601m0gh9rh7): "Jason Miller"
+        // can never be contained in firstName OR lastName alone, so a full-name
+        // search was structurally guaranteed zero results -- which read as
+        // "no such person" and was spoken as one, about a real tech. Two or
+        // more tokens adds first+last pairing as an OR branch.
+        const toks = term.split(/\s+/);
+        if (toks.length >= 2) {
+          orItems.push({
+            op: 'and',
+            items: [
+              { op: 'contains', field: 'firstName', value: toks[0] },
+              { op: 'contains', field: 'lastName', value: toks[toks.length - 1] }
+            ]
+          });
+        }
+        filters.push({ op: 'or', items: orItems });
       }
 
       if ((options as any).isActive !== undefined) {
