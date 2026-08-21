@@ -909,9 +909,14 @@ export class AutotaskToolHandler {
             status: 'after_hours', name, title, officeExtension: ext,
             matched: matchedFuzzy ? 'fuzzy' : 'exact',
             next_open_text: nextOpen || null,
+            // No on-call promise here (2026-08-21, Brian's adversarial test):
+            // B17 routes NOTHING while closed, so an offered "reach on-call"
+            // was a promise the transfer gate is designed to refuse. The KB
+            // owns the emergency flow (Critical ticket), and this text defers.
             guidance: `The office is closed, so a transfer to ${name} will not connect. ` +
               `${confirmFirst}offer: "${name} is gone for the day — I can add a note so they follow up ` +
-              `when we reopen${nextOpen ? ' ' + nextOpen : ''}, or if this is an emergency I can reach our on-call support."`,
+              `when we reopen${nextOpen ? ' ' + nextOpen : ''}." A business-down emergency follows the ` +
+              `after-hours escalation flow: a Critical ticket, not a transfer.`,
           }, message: `Office closed — ${name} not reachable until ${nextOpen || 'next open'}` };
         }
 

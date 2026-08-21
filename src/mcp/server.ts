@@ -1402,7 +1402,7 @@ export class AutotaskMcpServer {
                 sip_uri: '',
                 extension: ext,
                 status: 'unknown_extension',
-                message: `Extension '${ext}' is not a routable extension. bvoip extensions are exactly 4 digits. Use a tech officeExtension from autotask_search_resources, or a queue extension from kb_queue_gating's Relief Valve (8000 Sales, 8002 Business Support, 8003 Home Support, 8004 Billing). Autotask queue IDs from autotask_list_queues are NOT routable — they are ticket-tagging identifiers only.`,
+                message: `Extension '${ext}' is not a routable extension. bvoip extensions are exactly 4 digits. Use a tech officeExtension from autotask_lookup_tech_status, or a queue extension from kb_queue_gating's Relief Valve (8000 Sales, 8002 Business Support, 8003 Home Support, 8004 Billing). Autotask queue IDs from autotask_list_queues are NOT routable — they are ticket-tagging identifiers only.`,
               }));
               return;
             }
