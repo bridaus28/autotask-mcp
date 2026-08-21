@@ -686,10 +686,19 @@ export class AutotaskToolHandler {
           if (dateChoice) a = { ...a, ...dateChoice };
         }
         const { companyID, contactID, ...rest } = a;
+        // Open-only default (patch 0008). A caller asking "do I have a ticket"
+        // means open work; closed tickets in the pile invite matching a live
+        // call to a completed ticket. Two exemptions, so the past stays
+        // reachable: an explicit status, or a searchTerm (ticket-number /
+        // keyword lookup must find closed tickets). Measured 2026-08-21 on the
+        // call that motivated this (BEC, company 873): 287 tickets in the 90d
+        // window, 250 of them Complete — open-only returns 37.
+        const openDefault = a.status === undefined && !a.searchTerm;
         const opts = {
           ...rest,
           ...(companyID !== undefined && { companyId: companyID }),
           ...(contactID !== undefined && { contactID }),
+          ...(openDefault && { excludeClosed: true }),
         };
         // Report the page size the query ACTUALLY used, not the one the caller
         // supplied (usually nothing). See resolveTicketQuery.
@@ -743,6 +752,28 @@ export class AutotaskToolHandler {
               };
             }
           }
+        }
+        if (openDefault) {
+          // The filter above silently narrowed her world, so the response must
+          // label the scope — otherwise "no ticket in the list" reads as "no
+          // ticket exists" and she denies a closed ticket to a caller asking
+          // about past work. Labeled cap: 25 rows is scannable; the label marks
+          // the view as partial WITHOUT a total (an "of 287" is a number with
+          // no conversational use that could get spoken to the caller). Rows
+          // arrive newest-first from the service (id DESC), so slice(0, 25) is
+          // the 25 most recently created.
+          // Guidance names only moves that exist: searchTerm is ticketNumber-
+          // only (its own schema forbids symptom text), so "search a keyword"
+          // would be an instruction into a structurally-empty query — the
+          // same defect class as the search_resources full-name miss (d495f0a).
+          const OPEN_TICKET_CAP = 25;
+          if (r.length > OPEN_TICKET_CAP) {
+            const capped = r.slice(0, OPEN_TICKET_CAP);
+            const cappedHint = 'Showing the 25 most recent open tickets. To find an older one, narrow by contactID or a lastActivityAfter date, or ask the caller for the ticket number.';
+            return { result: capped, message: cappedHint, hint: cappedHint, effectivePageSize };
+          }
+          const openHint = 'All results are open tickets. Completed work is available when the caller asks about past tickets — search again with status 5 (Complete) or the exact ticket number.';
+          return { result: r, message: `Found ${r.length} open tickets`, hint: openHint, effectivePageSize };
         }
         return { result: r, message: `Found ${r.length} tickets`, effectivePageSize };
       }],

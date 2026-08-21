@@ -75,6 +75,15 @@ export function isNotFoundError(error: unknown): boolean {
  * companies fit in one response (Sunseri's Bar LLC ~100 tickets/90d, typical
  * managed customer < 25). Caller can still override smaller.
  */
+/**
+ * Ticket statuses that mean "done" — verified against the live picklist
+ * 2026-08-21 (18 active statuses): 5 = Complete, 20 = RMM Complete. Every
+ * other status (Follow up, Waiting *, Ready Pickup, MC - *, ...) is a working
+ * state and stays visible. Used only where excludeClosed is set; kept as an
+ * exclusion list so unknown future statuses fail open.
+ */
+export const CLOSED_TICKET_STATUSES: readonly number[] = [5, 20];
+
 export function resolveTicketQuery(
   options: AutotaskQueryOptionsExtended
 ): { lastActivityAfter?: string; pageSize: number } {
@@ -594,6 +603,15 @@ export class AutotaskService {
           field: 'status',
           value: options.status
         });
+      } else if (options.excludeClosed) {
+        // Open-only default (patch 0008). Root-level filter items are AND-ed by
+        // the Autotask REST API, so two noteq filters exclude both closed
+        // states. Exclusion (not an open-id allowlist) so a status added to the
+        // picklist later fails OPEN — it stays visible rather than silently
+        // vanishing from Ivy's view.
+        for (const closed of CLOSED_TICKET_STATUSES) {
+          filters.push({ op: 'noteq', field: 'status', value: closed });
+        }
       }
 
       if (options.unassigned === true) {

@@ -372,6 +372,10 @@ export interface AutotaskQueryOptionsExtended extends AutotaskQueryOptions {
   status?: number;
   assignedResourceID?: number;
   unassigned?: boolean;
+  // Exclude closed statuses server-side (see CLOSED_TICKET_STATUSES). Set only
+  // by the MCP ticket-search handler when the caller supplied no status and no
+  // searchTerm; other searchTickets call sites keep their own status handling.
+  excludeClosed?: boolean;
   // Date filters for ticket searches
   createdAfter?: string;
   createdBefore?: string;

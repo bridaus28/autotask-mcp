@@ -274,7 +274,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   // Ticket tools
   {
     name: 'autotask_search_tickets',
-    description: 'Search for tickets in Autotask. searchTerm performs a beginsWith match against ticketNumber only — it accepts ticket number prefixes like "T20260101" and is not a free-text search. Use contactID or companyID to find tickets belonging to a specific person or company. No status filter is applied by default — all tickets are returned unless you filter explicitly. Search results return a condensed ticket record (key fields only, description truncated to 200 chars) — use autotask_get_ticket_details for full content on a specific ticket. When filtering by company or contact without an explicit date range, the tool applies a default last-90-days window and returns up to 500 results in one page (the API maximum) so the entire 90-day universe fits in one response. Results are sorted newest-first by ticket ID. Pass createdAfter or lastActivityAfter explicitly to override the window.',
+    description: 'Search for tickets in Autotask. searchTerm performs a beginsWith match against ticketNumber only — it accepts ticket number prefixes like "T20260101" and is not a free-text search. Use contactID or companyID to find tickets belonging to a specific person or company. By default results are open tickets only — closed statuses (Complete, RMM Complete) are excluded unless you pass a status or a searchTerm. To reach completed work, pass status 5 (Complete) or the exact ticket number. Search results return a condensed ticket record (key fields only, description truncated to 200 chars) — use autotask_get_ticket_details for full content on a specific ticket. When filtering by company or contact without an explicit date range, the tool applies a default last-90-days window and returns up to 500 results in one page (the API maximum) so the entire 90-day universe fits in one response. Results are sorted newest-first by ticket ID. Pass createdAfter or lastActivityAfter explicitly to override the window.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -292,7 +292,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         status: {
           type: 'number',
-          description: 'Filter by a single ticket status integer ID. Use autotask_list_ticket_statuses to find valid IDs for this instance. Omit to return tickets of all statuses.'
+          description: 'Filter by a single ticket status integer ID. Use autotask_list_ticket_statuses to find valid IDs for this instance. Omit to return open tickets only (closed statuses are excluded by default); pass 5 (Complete) to search completed work.'
         },
         assignedResourceID: {
           type: 'number',
