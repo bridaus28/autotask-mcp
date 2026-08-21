@@ -411,13 +411,16 @@ export function spokenNameMatchesTech(
 }
 
 // Affirmative-only by CVIT best practice: says what to do, not what to avoid.
+// No rationale clauses adjacent to quoted lines: Brian's 2026-08-20 test call
+// had her speak "so I can note who is calling" aloud -- she narrates whatever
+// sits next to the words she is given to say.
 export const TECH_NAME_GUIDANCE =
   'That is a member of our team, so treat this as the person the caller wants ' +
   'to reach. Keep helping with exactly that: check availability with the ' +
-  'tech-status tool and arrange the transfer or a message. Ask "And may I ' +
-  'have your name?" so the record shows who called, then lock again with the ' +
-  'caller\'s own name. If they answer with this same name, it is their own ' +
-  '\u2014 the next lock will accept it.';
+  'tech-status tool and arrange the transfer or a message. Ask: "And may I ' +
+  'have your name?" Then lock again with the caller\'s own name. If they ' +
+  'answer with this same name, it is their own \u2014 the next lock will ' +
+  'accept it.';
 
 // ─── Who-is-who completion (2026-08-18, Brian) ───────────────────────────────
 // The rule the whole system now follows: a name never becomes a fact -- never
