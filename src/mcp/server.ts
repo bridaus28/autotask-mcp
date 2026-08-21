@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE, spokenEqualsTech } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -71,7 +71,16 @@ export { isPlaceholderSpokenName, NON_NAME_TOKENS, PLACEHOLDER_PAIRS } from '../
 export const NEAR_MISS_GUIDANCE =
   'The name lands close to the records without matching. Ask the caller to ' +
   'spell their last name, then call again with the spelled name. The names on ' +
-  'file stay internal.';
+  'file stay internal. Greet them by name only after it is confirmed.';
+
+// Lone-first twin (2026-08-20): "err... Tom" arrived as "Kirtom" and the old
+// clear-new branch offered to CREATE Kirtom at a phone-verified account that
+// has a Tom. The greet clause exists because she then said "My apologies,
+// Kirtom" -- wearing the misheard name while apologizing for it.
+export const FIRST_NEAR_MISS_GUIDANCE =
+  'That lands close to a name on file without matching. Say: "Could you spell ' +
+  'that for me?" then call again with the spelled name. The names on file stay ' +
+  'internal. Greet them by name only after it is confirmed.';
 
 export const CLEAR_NEW_GUIDANCE =
   'No one near that name at this account: treat the caller as new. Offer ' +
@@ -666,13 +675,18 @@ export class AutotaskMcpServer {
                       res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID }));
                     }
                   } else {
-                    if (orgShapedLast) {
-                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: ORG_SURNAME_GUIDANCE }));
-                    } else if (priorIdenticalAttempts > 0) {
-                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: REPEAT_NEW_CONTACT_GUIDANCE }));
-                    } else {
-                      res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: CLEAR_NEW_GUIDANCE }));
-                    }
+                    // Near-miss wiring (2026-08-20): the 08-15 distance design
+                    // defined this guidance and nothing ever selected it.
+                    // Precedence: org-shaped first (surname distance is
+                    // meaningless there), repeat second (S4: an identical
+                    // retry gets a decision, not another ask), near-miss
+                    // third (spelling adds signal), clear-new last.
+                    const gC = orgShapedLast ? ORG_SURNAME_GUIDANCE
+                      : priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE
+                      : (effectiveLast && isNearMissSurname(pool || [], effectiveLast)) ? NEAR_MISS_GUIDANCE
+                      : (!effectiveLast && isNearMissFirstName(pool || [], spokenFirst)) ? FIRST_NEAR_MISS_GUIDANCE
+                      : CLEAR_NEW_GUIDANCE;
+                    res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: gC }));
                   }
                   return;
                 }
@@ -890,9 +904,12 @@ export class AutotaskMcpServer {
                   res.end(JSON.stringify({ status: 'no_name_yet', company_id: companyID, guidance: gLone2 }));
                   return;
                 }
-                res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance:
-                  orgShapedLast ? ORG_SURNAME_GUIDANCE
-                  : priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE : CLEAR_NEW_GUIDANCE }));
+                const gP = orgShapedLast ? ORG_SURNAME_GUIDANCE
+                  : priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE
+                  : (effectiveLast && isNearMissSurname(pool || [], effectiveLast)) ? NEAR_MISS_GUIDANCE
+                  : (!effectiveLast && isNearMissFirstName(pool || [], spokenFirst)) ? FIRST_NEAR_MISS_GUIDANCE
+                  : CLEAR_NEW_GUIDANCE;
+                res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance: gP }));
                 return;
               } catch (phaseAErr) {
                 this.logger.warn('Spoken-name lock failed; falling back to no_verdict', { err: (phaseAErr as Error)?.message });

@@ -97,3 +97,30 @@ describe('business-literal answers (seam hit 2/2 organically, 08-17)', () => {
     expect(isBusinessLiteralAnswer(a)).toBe(false);
   });
 });
+
+describe('first-name near-miss (Brian live test 2026-08-20: "err... Tom" -> "Kirtom")', () => {
+  const { isNearMissFirstName, nearestFirstNameDistance } = require('../src/utils/name-match');
+  const DTC = [
+    { id: 1, firstName: 'Tom',    lastName: 'Daus' },
+    { id: 2, firstName: 'Dennis', lastName: 'Smith' },
+  ];
+  it('Kirtom is a near-miss of Tom (d=3, window 4) -> spell-ask, not create-offer', () => {
+    expect(nearestFirstNameDistance(DTC, 'Kirtom')).toBe(3);
+    expect(isNearMissFirstName(DTC, 'Kirtom')).toBe(true);
+  });
+  it('a clean unknown name is NOT a near-miss -> capture flow as before', () => {
+    expect(isNearMissFirstName(DTC, 'Zebulon')).toBe(false);
+    expect(isNearMissFirstName(DTC, 'Cynthia')).toBe(false);
+  });
+  it('an in-range name never reaches here (would have fuzzy-locked), function stays quiet', () => {
+    expect(isNearMissFirstName(DTC, 'Tom')).toBe(false);
+  });
+  it('matches against goes-by names too', () => {
+    const pool = [{ id: 3, firstName: 'Cassandra', middleInitial: 'Sandy', lastName: 'McCain' }];
+    // 'Sandry' is only 1 edit from 'Sandy' -- INSIDE match range, so the
+    // matcher itself would lock it and near-miss stays quiet:
+    expect(isNearMissFirstName(pool, 'Sandry')).toBe(false);
+    // 'Sandrina' is 4 edits out: outside match range, inside the window.
+    expect(isNearMissFirstName(pool, 'Sandrina')).toBe(true);
+  });
+});

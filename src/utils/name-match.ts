@@ -506,3 +506,32 @@ export function spokenEqualsTech(
   const f = norm(spokenFirst), l = norm(spokenLast);
   return Boolean(f && l && f === norm(tech.firstName) && l === norm(tech.lastName));
 }
+
+// ─── First-name near-miss (2026-08-20, Brian's live test call) ───────────────
+// "err... Tom" arrived from STT as the single token "Kirtom" -- three edits
+// from Tom, at an account with a handful of contacts including a Tom. The
+// distance-aware design (2026-08-15) only ever contemplated surnames, and its
+// guidance was defined but never wired. This is the lone-first twin: outside
+// match range (would have locked otherwise) but within threshold+2 of a first
+// name or goes-by on file, so spelling is the one channel that adds signal.
+export function nearestFirstNameDistance(pool: PoolContact[], spokenFirst?: string | null): number {
+  const f = String(spokenFirst ?? '').toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  if (!f || pool.length === 0) return Infinity;
+  let best = Infinity;
+  for (const c of pool) {
+    for (const field of [c.firstName, c.middleInitial]) {
+      const toks = String(field ?? '').toLowerCase().replace(/[^a-z]+/g, ' ').split(' ').filter(Boolean);
+      for (const t of toks) best = Math.min(best, editDistance(f, t));
+    }
+  }
+  return best;
+}
+
+/** True when a lone spoken first name is a whisker outside match range of a first name on file. */
+export function isNearMissFirstName(pool: PoolContact[], spokenFirst?: string | null): boolean {
+  const f = String(spokenFirst ?? '').toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  if (!f) return false;
+  const d = nearestFirstNameDistance(pool, f);
+  const t = threshold(f);
+  return d > t && d <= t + 2;
+}
