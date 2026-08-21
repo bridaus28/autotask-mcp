@@ -982,8 +982,16 @@ export class AutotaskToolHandler {
             result: {
               status: isAvailable ? 'available' : 'not_available', name, title, officeExtension: ext, available: isAvailable,
               matched: matchedFuzzy ? 'fuzzy' : 'exact',
+              // The transfer gate lives HERE as well as in the prompt (rule
+              // 52). Observed 2026-08-21 16:05 (conv_6001...hy3k5): on the
+              // available path the old imperative "say: Connecting..." was the
+              // text in her hand at the moment of decision, and it beat the
+              // prompt rule — caller transferred with no name and no reason
+              // given. Guidance is what she follows in the moment, so the
+              // moment-of-action text must state the gate. Kept to one
+              // sentence; the prompt still owns the rule.
               guidance: isAvailable
-                ? `${confirmFirst}say: "Connecting you to ${name} now." Use resolve_transfer_extension with extension ${ext} and transfer.`
+                ? `A transfer needs the caller's own name and a one-line reason first — when the call has already given them, go; when it has not, ask now. ${confirmFirst}say: "Connecting you to ${name} now." Use resolve_transfer_extension with extension ${ext} and transfer.`
                 : `${confirmFirst}offer: "${name} isn't available right now — I can take a message, or connect you with the support queue." ` +
                   `A message is one thing to the caller and speak of it only as a message; deliver it as a ` +
                   `note on the matching open ticket, or a new ticket when none fits. Compose it from what ` +
