@@ -914,9 +914,12 @@ export class AutotaskToolHandler {
             // was a promise the transfer gate is designed to refuse. The KB
             // owns the emergency flow (Critical ticket), and this text defers.
             guidance: `The office is closed, so a transfer to ${name} will not connect. ` +
-              `${confirmFirst}offer: "${name} is gone for the day — I can add a note so they follow up ` +
-              `when we reopen${nextOpen ? ' ' + nextOpen : ''}." A business-down emergency follows the ` +
-              `after-hours escalation flow: a Critical ticket, not a transfer.`,
+              `${confirmFirst}offer: "The office is closed right now — I can take a message for ${name} ` +
+              `so it's seen when we reopen${nextOpen ? ' ' + nextOpen : ''}." A business-down emergency ` +
+              `follows the after-hours escalation flow: a Critical ticket, not a transfer. A message is ` +
+              `one thing to the caller and speak of it only as a message; deliver it as a note on the ` +
+              `matching open ticket, or a new ticket when none fits. Compose it from what the call has ` +
+              `already given, read it back in one line, and ask only for what is genuinely missing.`,
           }, message: `Office closed — ${name} not reachable until ${nextOpen || 'next open'}` };
         }
 
@@ -950,7 +953,10 @@ export class AutotaskToolHandler {
               matched: matchedFuzzy ? 'fuzzy' : 'exact',
               guidance: isAvailable
                 ? `${confirmFirst}say: "Connecting you to ${name} now." Use resolve_transfer_extension with extension ${ext} and transfer.`
-                : `${confirmFirst}offer: "${name} isn't available right now — I can add a note to your ticket, take a message, or connect you with the support queue."`,
+                : `${confirmFirst}offer: "${name} isn't available right now — I can take a message, or connect you with the support queue." ` +
+                  `A message is one thing to the caller and speak of it only as a message; deliver it as a ` +
+                  `note on the matching open ticket, or a new ticket when none fits. Compose it from what ` +
+                  `the call has already given, read it back in one line, and ask only for what is genuinely missing.`,
             },
             message: `Tech ${name} is ${isAvailable ? 'available' : 'not available'}`
           };
