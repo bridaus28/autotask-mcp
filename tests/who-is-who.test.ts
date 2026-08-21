@@ -124,3 +124,14 @@ describe('first-name near-miss (Brian live test 2026-08-20: "err... Tom" -> "Kir
     expect(isNearMissFirstName(pool, 'Sandrina')).toBe(true);
   });
 });
+
+describe('namesake rider (2026-08-21: "Brian, please" locked Brian-the-customer silently)', () => {
+  const { techNamesakeRider } = require('../src/utils/name-match');
+  it('annotates without prohibiting: affirmative, names the pivot tool and the redo', () => {
+    const g = techNamesakeRider('Brian');
+    expect(g).toMatch(/also the first name of a member of our team/);
+    expect(g).toMatch(/tech-status/);
+    expect(g).toMatch(/lock again/);
+    expect(g).not.toMatch(/\bdo not\b|\bdon'?t\b|\bnever\b/i);
+  });
+});

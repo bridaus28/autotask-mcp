@@ -538,3 +538,18 @@ export function isNearMissFirstName(pool: PoolContact[], spokenFirst?: string | 
   const t = threshold(f);
   return d > t && d <= t + 2;
 }
+
+// ─── Namesake rider (2026-08-21, Brian's "Brian, please" call) ───────────────
+// A lone first name that LOCKS a contact and is also a unique tech first name
+// stays locked -- the customer list decides, as always. But the roster gets to
+// annotate: 51 companies have a Brian, 120 a David, and "get me David" from
+// one of them files the caller as their own colleague with no signal anything
+// went sideways. The rider is the receptionist's mental note: filed as the
+// visitor, ready to pivot if the next sentence says they MEANT our David.
+// No extra question is ever asked; a correct lock costs nothing.
+export function techNamesakeRider(techFirst: string): string {
+  const n = String(techFirst || 'them').trim();
+  return `Note: ${n} is also the first name of a member of our team. If the caller was ` +
+    `asking to reach our ${n} rather than giving their own name, use the tech-status ` +
+    `tool for that, and lock again when the actual caller gives their name.`;
+}

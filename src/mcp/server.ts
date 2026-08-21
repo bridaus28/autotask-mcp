@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -586,6 +586,16 @@ export class AutotaskMcpServer {
               } catch { return null; }
             };
 
+            // Namesake rider (2026-08-21): a lone first name that LOCKS still
+            // gets both lists consulted -- the roster annotates, never vetoes.
+            const namesakeRider = async (): Promise<string | null> => {
+              if (parsed.contact_id || !spokenFirst || spokenLast) return null;
+              try {
+                const t = loneFirstTechMatch(spokenFirst, spokenLast, await this.getTechRoster());
+                return t ? techNamesakeRider(String(t.firstName || spokenFirst)) : null;
+              } catch { return null; }
+            };
+
             // callerPhone alone now enters here. Until 2026-08-06 it did not, so a
             // call carrying only the phone fell through to the contact_id parser and
             // came back HTTP 400. That made the one honest move -- "look me up with
@@ -645,6 +655,7 @@ export class AutotaskMcpServer {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   if (verdict.status === 'locked') {
                     const c = verdict.contact;
+                    const riderA = await namesakeRider();
                     res.end(JSON.stringify({
                       status: 'locked', match: verdict.match, contact_id: c.id,
                       company_id: c.companyID ?? knownCompanyID,
@@ -652,6 +663,7 @@ export class AutotaskMcpServer {
                       first_name: c.firstName ?? null, last_name: c.lastName ?? null,
                       goes_by: (c as any).middleInitial || null,
                       is_primary: (c as any).primaryContact ?? false,
+                      ...(riderA ? { guidance: riderA } : {}),
                     }));
                   } else if (verdict.status === 'candidates') {
                     const soleA = soleCandidateLock(verdict);
@@ -659,6 +671,7 @@ export class AutotaskMcpServer {
                       this.logger.info('Contact lock: sole exact-first candidate locked at verified company (S5)', {
                         company_id: knownCompanyID, contactId: soleA.id,
                       });
+const riderB = await namesakeRider();
                       res.end(JSON.stringify({
                         status: 'locked', match: 'sole_candidate', contact_id: soleA.id,
                         company_id: soleA.companyID ?? knownCompanyID,
@@ -666,6 +679,7 @@ export class AutotaskMcpServer {
                         first_name: soleA.firstName ?? null, last_name: soleA.lastName ?? null,
                         goes_by: (soleA as any).middleInitial || null,
                         is_primary: (soleA as any).primaryContact ?? false,
+                      ...(riderB ? { guidance: riderB } : {}),
                       }));
                     } else if (orgShapedLast) {
                       res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID, guidance: ORG_SURNAME_GUIDANCE }));
@@ -840,6 +854,7 @@ export class AutotaskMcpServer {
                 if (verdict.status === 'locked') {
                   const c = verdict.contact;
                   res.writeHead(200, { 'Content-Type': 'application/json' });
+const riderC = await namesakeRider();
                   res.end(JSON.stringify({
                     status: 'locked',
                     match: verdict.match,
@@ -854,6 +869,7 @@ export class AutotaskMcpServer {
                     // "Cassandra (Sandy)" string aloud.
                     goes_by: (c as any).middleInitial || null,
                     is_primary: (c as any).primaryContact ?? false,
+                      ...(riderC ? { guidance: riderC } : {}),
                   }));
                   return;
                 }
@@ -864,6 +880,7 @@ export class AutotaskMcpServer {
                     this.logger.info('Contact lock: sole exact-first candidate locked at phone-verified company (S5)', {
                       companyID, contactId: soleB.id,
                     });
+const riderD = await namesakeRider();
                     res.end(JSON.stringify({
                       status: 'locked', match: 'sole_candidate', contact_id: soleB.id,
                       company_id: soleB.companyID ?? companyID,
@@ -871,6 +888,7 @@ export class AutotaskMcpServer {
                       first_name: soleB.firstName ?? null, last_name: soleB.lastName ?? null,
                       goes_by: (soleB as any).middleInitial || null,
                       is_primary: (soleB as any).primaryContact ?? false,
+                      ...(riderD ? { guidance: riderD } : {}),
                     }));
                     return;
                   }
