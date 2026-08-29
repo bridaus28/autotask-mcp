@@ -377,6 +377,44 @@ export class AutotaskToolHandler {
         if (customer_type === 'residential') {
           rest.classification = 13;      // Residential — verified live 2026-06-12
           rest.companyCategoryID = 100;  // residential category — verified live 2026-06-12
+          // ── S3 (2026-08-29): residential account name shape ───────────────
+          // For a residential account the company IS the person, and 498 of 500
+          // existing residential accounts are "Lastname, Firstname". Two written
+          // this week were not: co 7714 "Jean" (conv_4801 08-27) and co 7716
+          // "Samantha" (08-28), both bare first names, both written before the
+          // surname was ever settled. create_contact has refused a missing
+          // surname since 08-15; the company — the costlier, top-level record —
+          // had no such check, so the cheap record was gated and the expensive
+          // one was not.
+          //
+          // Refusal, not normalisation. No existing residential account is
+          // two-token-no-comma, so there is nothing to rescue by splitting on a
+          // space, and "Mary Ann" would silently become "Ann, Mary" — a wrong
+          // record with no error. One extra turn beats a wrong surname nobody
+          // notices.
+          const coNameIn = String(rest.companyName ?? '').trim();
+          const ci = coNameIn.indexOf(',');
+          const coLast = ci >= 0 ? coNameIn.slice(0, ci).trim() : '';
+          const coFirst = ci >= 0 ? coNameIn.slice(ci + 1).trim() : '';
+          if (!coLast || !coFirst) {
+            return {
+              result: { status: 'residential_name_shape', created: false },
+              message:
+                'Not created. A residential account is named "Lastname, Firstname" and ' +
+                'this one has no surname. Ask the caller for their last name, then call ' +
+                'again with companyName set to "Lastname, Firstname". If they decline, ' +
+                'create nothing: the ticket goes to the catch-all and the caller stays ' +
+                'unverified.',
+            };
+          }
+          if (isPlaceholderSpokenName(coFirst, coLast)) {
+            return {
+              result: { status: 'placeholder_name', created: false },
+              message:
+                'Not created. Ask who you are speaking with and use their answer. ' +
+                'Never use a name the caller did not say.',
+            };
+          }
         }
         const coKey = RecentWrites.key('company', { companyName: rest.companyName, phone: phoneDigits });
         const coReplay = RECENT_CREATES.check(coKey);
