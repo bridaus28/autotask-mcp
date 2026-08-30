@@ -137,7 +137,10 @@ describe('duplicate-create replay', () => {
   });
   test('identical create_company seconds apart writes once (the Ricela pattern)', async () => {
     const { handler, createdCompanies } = makeHandler();
-    const args = { companyName: 'Ricela', customer_type: 'residential', phone: '+16265551212' };
+    // Name made S3-compliant 2026-08-29: the residential shape guard refuses a
+    // bare first name, so the old 'Ricela' fixture never reached the replay path
+    // this test exists to check. Incident and assertion are unchanged.
+    const args = { companyName: 'Ricela, Ana', customer_type: 'residential', phone: '+16265551212' };
     const r1 = await callCo(handler, { ...args });
     const r2 = await callCo(handler, { ...args });
     expect(createdCompanies).toHaveLength(1);
@@ -236,5 +239,80 @@ describe('B15 domain from email', () => {
     (handler as any)['autotaskService'].getCompany = async () => { throw new Error('down'); };
     await call(handler, { ...args('Foxtrot'), emailAddress: 'web@rdrubber.com' });
     expect(created.length).toBe(1);
+  });
+});
+
+// ─── S3 (2026-08-29): residential company name shape ─────────────────────────
+// co 7714 "Jean" (conv_4801 08-27) and co 7716 "Samantha" (08-28): residential
+// accounts written with a bare first name. 498 of 500 existing residential
+// accounts are "Lastname, Firstname"; none are two-token-no-comma, which is why
+// this refuses rather than normalises.
+describe('S3 residential company name shape', () => {
+  const RES = { customer_type: 'residential', phone: '+13103758077' };
+
+  test('bare first name refused - the 7714 "Jean" write', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    const r = await callCo(handler, { ...RES, companyName: 'Jean' });
+    expect(text(r)).toContain('residential_name_shape');
+    expect(createdCompanies).toHaveLength(0);
+  });
+
+  test('bare first name refused - the 7716 "Samantha" write', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    const r = await callCo(handler, { ...RES, companyName: 'Samantha', phone: '+17609099228' });
+    expect(text(r)).toContain('residential_name_shape');
+    expect(createdCompanies).toHaveLength(0);
+  });
+
+  test('two tokens with no comma are refused, never split', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    const r = await callCo(handler, { ...RES, companyName: 'Mary Ann' });
+    expect(text(r)).toContain('residential_name_shape');
+    expect(createdCompanies).toHaveLength(0);
+  });
+
+  test('"Lastname, Firstname" creates', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    await callCo(handler, { ...RES, companyName: 'Lopez, Juan', phone: '+19093089467' });
+    expect(createdCompanies).toHaveLength(1);
+    expect(createdCompanies[0].companyName).toBe('Lopez, Juan');
+    expect(createdCompanies[0].classification).toBe(13);
+  });
+
+  test('empty side of the comma is refused', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    const r = await callCo(handler, { ...RES, companyName: 'Jean,' });
+    expect(text(r)).toContain('residential_name_shape');
+    expect(createdCompanies).toHaveLength(0);
+  });
+
+  test('placeholder pair refused even in the right shape', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    const r = await callCo(handler, { ...RES, companyName: 'Smith, John' });
+    expect(text(r)).toContain('placeholder_name');
+    expect(createdCompanies).toHaveLength(0);
+  });
+
+  test('surname "Unknown" refused', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    const r = await callCo(handler, { ...RES, companyName: 'Unknown, Jean' });
+    expect(text(r)).toContain('placeholder_name');
+    expect(createdCompanies).toHaveLength(0);
+  });
+
+  test('business accounts are untouched by the shape check', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    await callCo(handler, { customer_type: 'business', companyName: "Clark's Custom Cabinetry", phone: '+19099129483' });
+    expect(createdCompanies).toHaveLength(1);
+    expect(createdCompanies[0].companyName).toBe("Clark's Custom Cabinetry");
+  });
+
+  test('a refused create is not memoised as a replay', async () => {
+    const { handler, createdCompanies } = makeHandler();
+    const r1 = await callCo(handler, { ...RES, companyName: 'Jean' });
+    const r2 = await callCo(handler, { ...RES, companyName: 'Jean' });
+    expect(text(r1)).toContain('residential_name_shape');
+    expect(text(r2)).toContain('residential_name_shape');
+    expect(createdCompanies).toHaveLength(0);
   });
 });
