@@ -11,7 +11,7 @@ jest.mock('autotask-node', () => ({
 
 import {
   loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance,
-  isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE,
+  isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE,
   RosterTech,
 } from '../src/utils/name-match';
 
@@ -61,7 +61,7 @@ describe('both-lists collision + target-or-self guidance', () => {
   });
   it('affirmative-only: no prohibition phrasing', () => {
     for (const g of [targetOrSelfGuidance('Brian'), bothListsGuidance('Jason Miller'),
-                     BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE]) {
+                     BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE]) {
       expect(g).not.toMatch(/\bdo not\b|\bdon'?t\b/i);
     }
   });
@@ -133,5 +133,29 @@ describe('namesake rider (2026-08-21: "Brian, please" locked Brian-the-customer 
     expect(g).toMatch(/tech-status/);
     expect(g).toMatch(/lock again/);
     expect(g).not.toMatch(/\bdo not\b|\bdon'?t\b|\bnever\b/i);
+  });
+});
+
+// ─── The re-ask no longer restates the binary (2026-08-30, Brian) ───────────
+// The binary belongs to the first ask, where the Twilio webhook can see whether
+// the accounts actually split home from business. This string only speaks on a
+// re-ask, so it asks the question that is always valid.
+describe('AMBIGUOUS_COMPANY_GUIDANCE', () => {
+  it('asks which company the call is about', () => {
+    expect(AMBIGUOUS_COMPANY_GUIDANCE).toContain('Which company is this call about?');
+  });
+  it('no longer carries the home-or-business binary', () => {
+    expect(AMBIGUOUS_COMPANY_GUIDANCE.toLowerCase()).not.toContain('home or your business');
+    expect(AMBIGUOUS_COMPANY_GUIDANCE.toLowerCase()).not.toContain('not a company');
+  });
+  it('still leaves the personal-account caller a way through', () => {
+    expect(AMBIGUOUS_COMPANY_GUIDANCE).toMatch(/personal will say so/);
+  });
+  it('keeps the two-attempt cap and the unverified exit', () => {
+    expect(AMBIGUOUS_COMPANY_GUIDANCE).toMatch(/Two attempts maximum/);
+    expect(AMBIGUOUS_COMPANY_GUIDANCE).toMatch(/UNVERIFIED INTAKE on companyID 0/);
+  });
+  it('never names or counts the accounts on file', () => {
+    expect(AMBIGUOUS_COMPANY_GUIDANCE.toLowerCase()).not.toMatch(/\btwo accounts\b|\bboth\b/);
   });
 });
