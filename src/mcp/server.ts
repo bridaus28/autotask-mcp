@@ -87,6 +87,50 @@ export const CLEAR_NEW_GUIDANCE =
   'Identity Capture per the SOP now; the capture flow confirms spelling ' +
   'before anything is written.';
 
+// ─── Ask ladder: repeat once, then spell, then settle (2026-08-30, Brian) ────
+// A caller whose name the transcriber mangled should hear a receptionist ask,
+// not a spelling drill. Spelling remains the independent channel that actually
+// adds signal (08-15); it just arrives second. Kim heard as "Tim" and Zandra as
+// "Angela" on 08-27/28 are what this is for -- people enunciate badly and Scribe
+// guesses, and neither is the caller's fault to be drilled on.
+//
+// Tiered on asks-per-caller, NOT per-token: a second mangling produces a
+// DIFFERENT token, so the token-keyed counter would read zero and ask again,
+// and again -- the S4 Covina loop rebuilt sideways. Two asks maximum, matching
+// the prompt's own retry cap.
+export const REPEAT_SURNAME_GUIDANCE =
+  'That lands close to the records without matching, and the transcription is ' +
+  'as likely at fault as the caller. Say: "Sorry, could you say your last name ' +
+  'again for me?" then call again with what you hear. The names on file stay ' +
+  'internal. Greet them by name only after it is confirmed.';
+
+export const REPEAT_FIRST_GUIDANCE =
+  'That lands close to a name on file without matching. Say: "Sorry, could you ' +
+  'say your first name again for me?" then call again with what you hear. The ' +
+  'names on file stay internal. Greet them by name only after it is confirmed.';
+
+export const CANDIDATES_REPEAT_GUIDANCE =
+  'The name given is not a confident match, and the transcription is as likely ' +
+  'at fault as the caller. Say: "Sorry, could you say your name again for me?" ' +
+  'then lock again with what you hear; never list the names on file.';
+
+export const CANDIDATES_SPELL_GUIDANCE =
+  'The name given is not a confident match. Ask the caller to confirm or spell ' +
+  'their name, and their last name if you only have a first, then lock again; ' +
+  'never list the names on file.';
+
+/**
+ * Which rung of the ask ladder this attempt sits on.
+ *  repeat  - first failure: a warm re-ask, the transcriber is as likely at fault
+ *  spell   - second failure: the independent channel (08-15)
+ *  settled - cap reached, or an identical retry that cannot converge (S4)
+ */
+export type AskTier = 'repeat' | 'spell' | 'settled';
+export function askTier(priorAsks: number, priorIdenticalAttempts: number): AskTier {
+  if (priorIdenticalAttempts > 0 || priorAsks >= 2) return 'settled';
+  return priorAsks === 0 ? 'repeat' : 'spell';
+}
+
 export const NO_NAME_GUIDANCE = 'No name yet, and that is fine \u2014 nothing was looked up, so there is nothing to tell the caller. Ask who you are speaking with, then call again with their answer. Never use a name the caller did not say.';
 
 
@@ -101,6 +145,9 @@ export class AutotaskMcpServer {
   private httpServer?: HttpServer;
   private picklistCache: PicklistCache;
   private repeatedLocks = new RepeatedLockAttempts();
+  // Asks-per-caller, deliberately not keyed on the spoken tokens. See the
+  // ask-ladder note above REPEAT_SURNAME_GUIDANCE.
+  private askLadder = new RepeatedLockAttempts();
   // Tech-name guard (2026-08-17): phone-routable roster, cached so the lock
   // does not pay a Resources query per call. Same roster definition as
   // autotask_lookup_tech_status: active AND carries an officeExtension.
@@ -437,6 +484,7 @@ export class AutotaskMcpServer {
             const effectiveLast = orgShapedLast ? '' : spokenLast;
             const lockAttemptKey = RepeatedLockAttempts.key(callerPhone, parsed.company_id, spokenFirst, spokenLast);
             const priorIdenticalAttempts = (spokenFirst || spokenLast) ? this.repeatedLocks.countAndRecord(lockAttemptKey) : 0;
+            const askLadderKey = RepeatedLockAttempts.key(callerPhone, parsed.company_id, '', '');
             // Refuse a placeholder before spending a lookup on it. Returns its own
             // status so the agent cannot read this as "no such person, offer to add
             // them" -- which is exactly what happened on 08-06 10:18, where she
@@ -695,10 +743,13 @@ const riderB = await namesakeRider();
                     // meaningless there), repeat second (S4: an identical
                     // retry gets a decision, not another ask), near-miss
                     // third (spelling adds signal), clear-new last.
+                    const tierA = askTier(this.askLadder.countAndRecord(askLadderKey), priorIdenticalAttempts);
                     const gC = orgShapedLast ? ORG_SURNAME_GUIDANCE
-                      : priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE
-                      : (effectiveLast && isNearMissSurname(pool || [], effectiveLast)) ? NEAR_MISS_GUIDANCE
-                      : (!effectiveLast && isNearMissFirstName(pool || [], spokenFirst)) ? FIRST_NEAR_MISS_GUIDANCE
+                      : tierA === 'settled' ? REPEAT_NEW_CONTACT_GUIDANCE
+                      : (effectiveLast && isNearMissSurname(pool || [], effectiveLast))
+                        ? (tierA === 'repeat' ? REPEAT_SURNAME_GUIDANCE : NEAR_MISS_GUIDANCE)
+                      : (!effectiveLast && isNearMissFirstName(pool || [], spokenFirst))
+                        ? (tierA === 'repeat' ? REPEAT_FIRST_GUIDANCE : FIRST_NEAR_MISS_GUIDANCE)
                       : CLEAR_NEW_GUIDANCE;
                     res.end(JSON.stringify({ status: 'new_contact', company_id: knownCompanyID, guidance: gC }));
                   }
@@ -900,7 +951,11 @@ const riderD = await namesakeRider();
                     res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: REPEAT_CANDIDATES_GUIDANCE }));
                     return;
                   }
-                  res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: 'The name given is not a confident match. Ask the caller to confirm or spell their name, and their last name if you only have a first, then lock again; never list the names on file.' }));
+                  const tierC = askTier(this.askLadder.countAndRecord(askLadderKey), 0);
+                  const gCand = tierC === 'settled' ? REPEAT_CANDIDATES_GUIDANCE
+                    : tierC === 'repeat' ? CANDIDATES_REPEAT_GUIDANCE
+                    : CANDIDATES_SPELL_GUIDANCE;
+                  res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: companyID, guidance: gCand }));
                   return;
                 }
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -922,10 +977,13 @@ const riderD = await namesakeRider();
                   res.end(JSON.stringify({ status: 'no_name_yet', company_id: companyID, guidance: gLone2 }));
                   return;
                 }
+                const tierB = askTier(this.askLadder.countAndRecord(askLadderKey), priorIdenticalAttempts);
                 const gP = orgShapedLast ? ORG_SURNAME_GUIDANCE
-                  : priorIdenticalAttempts > 0 ? REPEAT_NEW_CONTACT_GUIDANCE
-                  : (effectiveLast && isNearMissSurname(pool || [], effectiveLast)) ? NEAR_MISS_GUIDANCE
-                  : (!effectiveLast && isNearMissFirstName(pool || [], spokenFirst)) ? FIRST_NEAR_MISS_GUIDANCE
+                  : tierB === 'settled' ? REPEAT_NEW_CONTACT_GUIDANCE
+                  : (effectiveLast && isNearMissSurname(pool || [], effectiveLast))
+                    ? (tierB === 'repeat' ? REPEAT_SURNAME_GUIDANCE : NEAR_MISS_GUIDANCE)
+                  : (!effectiveLast && isNearMissFirstName(pool || [], spokenFirst))
+                    ? (tierB === 'repeat' ? REPEAT_FIRST_GUIDANCE : FIRST_NEAR_MISS_GUIDANCE)
                   : CLEAR_NEW_GUIDANCE;
                 res.end(JSON.stringify({ status: 'new_contact', company_id: companyID, guidance: gP }));
                 return;
