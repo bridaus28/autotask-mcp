@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -930,15 +930,57 @@ const riderB = await namesakeRider();
                     }));
                     return;
                   }
-                  // A spoken name CANNOT resolve this branch, and the old guidance
-                  // ("proceed per the Identity SOP ambiguous flow") did not say so.
-                  // Measured 2026-07-28: on both ambiguous phones seen that day every
-                  // candidate company held the SAME person -- Gabe Nakash at 4728 and
-                  // 761; Carol McAloney at 437, 1322 and 6225. Name matching across
-                  // the pool is therefore useless here by construction, which is why
-                  // this returns before matchSpokenName rather than after it.
-                  // Only the caller's answer about WHICH company discriminates, and the
-                  // only way to act on that answer is a contact_id lock. Say that.
+                  // ─── Name first (2026-08-30, Brian) ──────────────────────
+                  // This used to return before matchSpokenName ever ran, on the
+                  // 2026-07-28 finding that both ambiguous phones seen that day
+                  // held the SAME person at every candidate company (Gabe Nakash
+                  // at 4728/761; Carol McAloney at 437/1322/6225), making a name
+                  // useless here by construction.
+                  //
+                  // Re-measured across the 21 multi-account phones of 08-22..29:
+                  // 15 do carry the same person and the old finding holds for
+                  // them. But 6 carry DIFFERENT people, and there the name settles
+                  // the account AND the caller in one question where the company
+                  // route needs two. A name is also the one question that has to
+                  // be asked in every branch -- identity is never optional -- so
+                  // asking it first is never a wasted turn, while the company
+                  // question can never finish a call on its own.
+                  //
+                  // A pool that cannot discriminate ties and falls straight
+                  // through to the company question exactly as before. Only an
+                  // outright lock is taken: no sole-candidate lift across
+                  // accounts, because the wrong answer there is a stranger rather
+                  // than the wrong colleague.
+                  if (spokenFirst || effectiveLast) {
+                    const acrossPool = matchSpokenName((phoneContacts || []) as PoolContact[], spokenFirst, effectiveLast);
+                    // ...unless the pool holds the same person twice. See
+                    // sameSoulAcrossAccounts: a name cannot choose between
+                    // someone and themselves, and an exact hit on one spelling
+                    // variant would pick an account by accident.
+                    if (acrossPool.status === 'locked'
+                        && !sameSoulAcrossAccounts((phoneContacts || []) as PoolContact[], acrossPool.contact)) {
+                      const c = acrossPool.contact as any;
+                      this.logger.info('Contact lock: name resolved a multi-account phone', {
+                        companyIds, contactId: c.id, companyId: c.companyID, match: acrossPool.match,
+                      });
+                      res.writeHead(200, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({
+                        status: 'locked',
+                        match: acrossPool.match,
+                        contact_id: c.id,
+                        company_id: c.companyID ?? null,
+                        company_name: await this.companyNameOf(c.companyID),
+                        first_name: c.firstName ?? null,
+                        last_name: c.lastName ?? null,
+                        goes_by: c.middleInitial || null,
+                        is_primary: c.primaryContact ?? false,
+                      }));
+                      return;
+                    }
+                  }
+                  // The name did not discriminate. Only the caller's answer about
+                  // WHICH company can, and the only way to act on it is a
+                  // contact_id lock. Say that.
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   res.end(JSON.stringify({
                     status: 'ambiguous_company',

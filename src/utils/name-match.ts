@@ -172,6 +172,34 @@ export function matchSpokenName(
   return { status: 'candidates', count: exact.length > 1 ? exact.length : firstMatches.length };
 }
 
+/**
+ * True when the pool plainly holds the SAME person at more than one account:
+ * first name and surname each within the usual threshold, different companyID.
+ *
+ * This is the 2026-07-28 finding stated precisely rather than as a blanket ban.
+ * Gabe Nakash at 4728 and 761, Carol McAloney at 437/1322/6225 -- and the
+ * spelling-variant flavour, Kristine Desbines (3895) and Kristine DesBiens
+ * (5961), where an exact match on one spelling scores zero and the other does
+ * not, so the name would silently pick which of her accounts the call lands on.
+ *
+ * A name cannot choose between someone and themselves. Only the company answer
+ * can, so a lock over a pool like this is refused and the question falls
+ * through. A name that is unique across the accounts is untouched.
+ */
+export function sameSoulAcrossAccounts(pool: PoolContact[], contact: PoolContact): boolean {
+  const f = norm(contact.firstName), l = norm(contact.lastName);
+  if (!f && !l) return false;
+  return (pool || []).some(o => {
+    if (o.id === contact.id) return false;
+    if (o.companyID == null || contact.companyID == null) return false;
+    if (o.companyID === contact.companyID) return false;
+    const of = norm(o.firstName), ol = norm(o.lastName);
+    const firstClose = !f || !of ? false : editDistance(f, of) <= threshold(f);
+    const lastClose  = !l || !ol ? !l && !ol : editDistance(l, ol) <= threshold(l);
+    return firstClose && lastClose;
+  });
+}
+
 // ─── Placeholder-name detection (moved from mcp/server.ts 2026-08-15 so the ───
 // ─── create-side guards can share it without an import cycle) ────────────────
 // The model fills a parameter it thinks it needs rather than asking. The server
