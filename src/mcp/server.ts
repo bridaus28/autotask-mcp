@@ -155,6 +155,40 @@ export const NO_RESIDENTIAL_ON_PHONE_GUIDANCE =
   'carry on with what they need and handle it as UNVERIFIED INTAKE on ' +
   'companyID 0.';
 
+/**
+ * Resolve a caller's phone to the account it belongs to, the way /phone-lookup
+ * already does it.
+ *
+ * A phone reaches us two ways: carried by a CONTACT, or as a company's MAIN
+ * number with no contact on it. /phone-lookup handles both -- no contacts means
+ * fall back to searchCompanies({ phone }) and report company_main_phone.
+ * /contact-lock only ever did the first, so a main-number caller resolved to an
+ * empty pool and came back no_record. Measured 3 May - 30 Aug 2026: 56 calls
+ * arrived on a company main number and produced 41 no_record against 1 lock.
+ * The account was known to the system on every one of them.
+ *
+ * `via` records which route answered, so the caller of this function can log or
+ * branch on it. An unresolvable phone returns an empty pool and the caller
+ * falls through to the no_record it would have returned anyway.
+ */
+export type PhoneAccount = { pool: PoolContact[]; companyIds: number[]; via: 'contacts' | 'company_main_phone' | 'none' };
+
+export async function resolvePhoneAccount(service: any, callerPhone: string): Promise<PhoneAccount> {
+  const pool = (await service.searchContacts({ phone: callerPhone })) as PoolContact[] || [];
+  const companyIds = [...new Set(pool.map(c => c.companyID).filter((x): x is number => x != null))];
+  if (companyIds.length > 0) return { pool, companyIds, via: 'contacts' };
+  if (!callerPhone) return { pool, companyIds, via: 'none' };
+  try {
+    const cos = await service.searchCompanies({ phone: callerPhone });
+    const co = (cos || []).find((c: any) => c.isActive !== 0 && c.isActive !== false) || (cos || [])[0];
+    if (co && co.id != null) {
+      const coPool = (await service.searchContacts({ companyID: co.id, pageSize: 200 })) as PoolContact[] || [];
+      if (coPool.length > 0) return { pool: coPool, companyIds: [co.id as number], via: 'company_main_phone' };
+    }
+  } catch { /* fail open: an unresolvable phone stays no_record */ }
+  return { pool, companyIds, via: 'none' };
+}
+
 export const NO_NAME_GUIDANCE = 'No name yet, and that is fine \u2014 nothing was looked up, so there is nothing to tell the caller. Ask who you are speaking with, then call again with their answer. Never use a name the caller did not say.';
 
 
@@ -793,8 +827,14 @@ const riderB = await namesakeRider();
                   res.end(JSON.stringify({ status: 'no_verdict', guidance: 'caller_phone missing; proceed with the standard contact search flow.' }));
                   return;
                 }
-                const phoneContacts = await this.autotaskService.searchContacts({ phone: callerPhone }) as PoolContact[];
-                const companyIds = [...new Set((phoneContacts || []).map(c => c.companyID).filter((x): x is number => x != null))];
+                const resolved = await resolvePhoneAccount(this.autotaskService, callerPhone);
+                const phoneContacts = resolved.pool;
+                const companyIds = resolved.companyIds;
+                if (resolved.via === 'company_main_phone') {
+                  this.logger.info('Contact lock: phone is a company main number', {
+                    companyId: companyIds[0], poolSize: phoneContacts.length,
+                  });
+                }
                 if (companyIds.length === 0) {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   // Reports what was checked and nothing else. This is a phone lookup:
