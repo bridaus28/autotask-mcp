@@ -32,6 +32,10 @@ export type CompanyVerdict =
   | { status: 'ambiguous_company'; count: number }
   | { status: 'ambiguous_residential'; count: number }
   | { status: 'company_no_match' }
+  // "not a company" was the answer, but every account on this phone is a
+  // business. Distinct from a company name that simply missed, because the
+  // recovery is different: ask which business, not which spelling.
+  | { status: 'no_residential_account' }
   // The company answer settled the ACCOUNT but not the PERSON: every top
   // scorer is the same company, carried by several contacts on this phone.
   | { status: 'company_only'; companyId: number; count: number }
@@ -99,7 +103,13 @@ export function matchSpokenCompany(
     const res = candidates.filter(c => (c.classification ?? '').toLowerCase() === 'residential');
     if (res.length === 1) return { status: 'locked', candidate: res[0], via: 'residential' };
     if (res.length > 1) return { status: 'ambiguous_residential', count: res.length };
-    return { status: 'company_no_match' };
+    // No personal account here at all. Seen when the caller answered the
+    // home-or-business binary with "business", "both", "neither" or a filler
+    // and the answer reached us as the residential token anyway (08-26, 08-27,
+    // and Brian's 08-29 test). Generic no-match guidance sent her back for a
+    // spelling she was never going to produce; naming the real situation lets
+    // her ask the question that can actually resolve it.
+    return { status: 'no_residential_account' };
   }
 
   const spokenToks = distinctive(spoken);

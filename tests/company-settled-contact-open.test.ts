@@ -12,6 +12,10 @@
  * first_name/last_name; choosing a person here is choosing who the caller is.
  * So: settle the company, stop, ask who is calling.
  */
+jest.mock('autotask-node', () => ({
+  AutotaskClient: { create: jest.fn().mockRejectedValue(new Error('Mock: no live API in tests')) }
+}));
+
 import { matchSpokenCompany } from '../src/utils/company-match';
 
 const DAUS = (n: number) => Array.from({ length: n }, (_, i) => ({
@@ -73,8 +77,11 @@ describe('unchanged behaviour', () => {
     expect(matchSpokenCompany(REAL, 'Northwind Traders').status).toBe('company_no_match');
   });
 
-  test('"not a company" with no residential account is unchanged', () => {
-    expect(matchSpokenCompany(REAL, 'not a company').status).toBe('company_no_match');
+  test('"not a company" with no residential account is now its own verdict', () => {
+    // Split out 2026-08-30 so the guidance can name the real situation. The
+    // caller-visible status the server emits is still company_no_match, so
+    // nothing changes for Ivy except the sentence she is handed.
+    expect(matchSpokenCompany(REAL, 'not a company').status).toBe('no_residential_account');
   });
 
   test('tied candidates with no company id never settle an account', () => {
@@ -83,5 +90,58 @@ describe('unchanged behaviour', () => {
       { contactId: 2, companyId: null, companyName: 'Alpha Co', classification: null, primaryContact: false },
     ] as any;
     expect(matchSpokenCompany(nulls, 'Alpha').status).toBe('ambiguous_company');
+  });
+});
+
+// ─── Use the name already given; name the real dead end (2026-08-30) ────────
+import {
+  COMPANY_SETTLED_GUIDANCE,
+  NO_RESIDENTIAL_ON_PHONE_GUIDANCE,
+} from '../src/mcp/server';
+
+describe('"not a company" on a phone with no personal account', () => {
+  // Brian's 08-29 test: he answered "My business" and the residential token was
+  // sent anyway. Also ft65nqys ("Both") and 2ycgyc03 ("Yeah") this week. The
+  // generic no-match text sent her back for a spelling nobody had asked for.
+  test('is its own verdict, not a failed company name', () => {
+    expect(matchSpokenCompany(REAL, 'not a company').status).toBe('no_residential_account');
+  });
+  test('one residential account still locks', () => {
+    const r: any = matchSpokenCompany([
+      { contactId: 1, companyId: 900, companyName: 'Garcia, Cindy', classification: 'Residential', primaryContact: true },
+      TEST_BRIAN,
+    ] as any, 'not a company');
+    expect(r.status).toBe('locked');
+    expect(r.via).toBe('residential');
+  });
+  test('two residential accounts are still ambiguous_residential', () => {
+    const r: any = matchSpokenCompany([
+      { contactId: 1, companyId: 900, companyName: 'Garcia, Cindy', classification: 'Residential', primaryContact: true },
+      { contactId: 2, companyId: 901, companyName: 'Garcia, C', classification: 'Residential', primaryContact: true },
+    ] as any, 'not a company');
+    expect(r.status).toBe('ambiguous_residential');
+    expect(r.count).toBe(2);
+  });
+  test('other home-shaped answers reach the same verdict', () => {
+    for (const s of ['home', 'personal', 'residential', 'myself'])
+      expect(matchSpokenCompany(REAL, s).status).toBe('no_residential_account');
+  });
+});
+
+describe('guidance wording', () => {
+  test('a name already given is used, not asked for twice', () => {
+    expect(COMPANY_SETTLED_GUIDANCE).toContain('already given you');
+    expect(COMPANY_SETTLED_GUIDANCE).toContain('do not ask for it a second time');
+    expect(COMPANY_SETTLED_GUIDANCE).toContain('only if you have no name yet');
+  });
+  test('the account is still never read out as a list of people', () => {
+    expect(COMPANY_SETTLED_GUIDANCE).toContain('Never name or list the people on file');
+  });
+  test('the no-personal-account fact stays internal', () => {
+    expect(NO_RESIDENTIAL_ON_PHONE_GUIDANCE).toContain('Do not tell the caller that');
+    expect(NO_RESIDENTIAL_ON_PHONE_GUIDANCE).toContain('ask which company');
+  });
+  test('it never tells her to ask for a spelling she was not owed', () => {
+    expect(NO_RESIDENTIAL_ON_PHONE_GUIDANCE.toLowerCase()).not.toContain('spell');
   });
 });
