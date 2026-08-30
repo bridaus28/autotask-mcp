@@ -92,3 +92,18 @@ describe('guidance wording', () => {
     }
   });
 });
+
+describe('ladder window is deliberately short', () => {
+  // Two people can call from one number back to back. There is no call id on
+  // this endpoint, so the window is the only guard; the second caller must not
+  // inherit the first caller's rung.
+  test('the ladder expires well inside a call gap', async () => {
+    const ladder = new RepeatedLockAttempts(60);
+    const key = RepeatedLockAttempts.key('+19095551212', 668, '', '');
+    expect(askTier(ladder.countAndRecord(key), 0)).toBe('repeat');
+    expect(askTier(ladder.countAndRecord(key), 0)).toBe('spell');
+    await new Promise(r => setTimeout(r, 80));
+    // A later caller on the same number starts clean rather than at 'settled'.
+    expect(askTier(ladder.countAndRecord(key), 0)).toBe('repeat');
+  });
+});

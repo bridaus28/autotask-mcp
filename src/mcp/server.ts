@@ -147,7 +147,16 @@ export class AutotaskMcpServer {
   private repeatedLocks = new RepeatedLockAttempts();
   // Asks-per-caller, deliberately not keyed on the spoken tokens. See the
   // ask-ladder note above REPEAT_SURNAME_GUIDANCE.
-  private askLadder = new RepeatedLockAttempts();
+  //
+  // 90s, not the 600s default (Brian, 2026-08-30). There is no call identifier
+  // on this endpoint, so the key is phone+company and two people calling from
+  // one number back to back would share a ladder -- the second caller sent to
+  // spelling, or past the cap and never asked at all. A caller asked to repeat
+  // answers in seconds; back-to-back different callers on one phone are rarely
+  // inside 90s. This narrows the window, it does not close it. Closing it needs
+  // system__conversation_id passed through, which is a tool-schema change and an
+  // approval resync -- queued, not done here.
+  private askLadder = new RepeatedLockAttempts(90_000);
   // Tech-name guard (2026-08-17): phone-routable roster, cached so the lock
   // does not pay a Resources query per call. Same roster definition as
   // autotask_lookup_tech_status: active AND carries an officeExtension.
