@@ -516,12 +516,23 @@ export const BUSINESS_LITERAL_GUIDANCE =
   'Good — it is a business. Ask: "What is the company name?" and call this tool again ' +
   'passing the answer verbatim as spoken_company.';
 
-export const AMBIGUOUS_COMPANY_BINARY_GUIDANCE =
+// Renamed and reworded 2026-08-30 (Brian). This string used to restate the
+// home-or-business binary word for word, which the Twilio caller_context also
+// carries -- two copies of one sentence in two codebases, which is how the
+// 2026-08-18 C1 conflict happened.
+//
+// The binary belongs to the FIRST ask, where the webhook can see whether the
+// accounts split home from business (measured 3 May - 30 Aug: 117 of 185 do,
+// 64 are two businesses, 4 two personal). This guidance only ever speaks on a
+// RE-ask, after the first question has already been put and failed. At that
+// point asking which company is always valid, so it no longer needs to know
+// the binary exists. One layer owns the binary; this one gets shorter.
+export const AMBIGUOUS_COMPANY_GUIDANCE =
   'This phone is on file at more than one account, so no spoken name can resolve it. Ask ' +
-  'exactly: "Is this for your home or your business?" For home, call this tool again with ' +
-  'spoken_company set to "not a company". For business, ask the company name and pass the ' +
-  'answer verbatim as spoken_company. Two attempts maximum, then help the caller anyway and ' +
-  'record the call as UNVERIFIED INTAKE on companyID 0.';
+  'exactly: "Which company is this call about?" and pass the answer verbatim as ' +
+  'spoken_company; a caller whose account is personal will say so, and that resolves too. ' +
+  'Two attempts maximum, then help the caller anyway and record the call as UNVERIFIED ' +
+  'INTAKE on companyID 0.';
 
 /** Exact-normalized full-name equality with a roster tech. The both-lists
  * question is only asked when the names genuinely collide to a human ear:

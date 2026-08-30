@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_BINARY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -1028,7 +1028,7 @@ const riderB = await namesakeRider();
                     // Aligned 2026-08-18 with the webhook's home-or-business
                     // binary (C1-class conflict: this text still carried the
                     // old open question while caller_context asked the binary).
-                    guidance: AMBIGUOUS_COMPANY_BINARY_GUIDANCE,
+                    guidance: AMBIGUOUS_COMPANY_GUIDANCE,
                   }));
                   return;
                 }
