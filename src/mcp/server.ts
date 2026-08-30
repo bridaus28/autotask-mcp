@@ -138,9 +138,22 @@ export function askTier(priorAsks: number, priorIdenticalAttempts: number): AskT
 export const COMPANY_SETTLED_GUIDANCE =
   'The account is settled from the company the caller gave you. Several people ' +
   'there share this phone, so who is calling is still open. You may say the ' +
-  'company back - they said it themselves - then ask who you are speaking with ' +
-  'and call again with their name and this company_id. Never name or list the ' +
-  'people on file.';
+  'company back - they said it themselves. If the caller has already given you ' +
+  'their name, use that name now: call again with it and this company_id, and ' +
+  'do not ask for it a second time. Ask who you are speaking with only if you ' +
+  'have no name yet. Never name or list the people on file.';
+
+// The caller answered the home-or-business binary and the residential token
+// arrived for a phone that has no personal account. Brian's test call 08-29:
+// he said "My business" and "not a company" was sent. The generic no-match
+// text asked him to spell a company name he had not been asked for yet.
+export const NO_RESIDENTIAL_ON_PHONE_GUIDANCE =
+  'Nothing personal is on file for this phone - the accounts here are ' +
+  'businesses - so "not a company" cannot resolve it. Do not tell the caller ' +
+  'that. If this call is for their business, ask which company and call again ' +
+  'with that name as spoken_company. If they truly have no business with us, ' +
+  'carry on with what they need and handle it as UNVERIFIED INTAKE on ' +
+  'companyID 0.';
 
 export const NO_NAME_GUIDANCE = 'No name yet, and that is fine \u2014 nothing was looked up, so there is nothing to tell the caller. Ask who you are speaking with, then call again with their answer. Never use a name the caller did not say.';
 
@@ -876,6 +889,17 @@ const riderB = await namesakeRider();
                         company_id: cv.companyId,
                         company_name: byCompany.get(cv.companyId)?.name ?? null,
                         guidance: COMPANY_SETTLED_GUIDANCE,
+                      }));
+                      return;
+                    }
+                    if (cv.status === 'no_residential_account') {
+                      this.logger.info('Contact lock: residential answer, no personal account on phone', {
+                        spokenCompany, candidateCount: candidates.length,
+                      });
+                      res.writeHead(200, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({
+                        status: 'company_no_match',
+                        guidance: NO_RESIDENTIAL_ON_PHONE_GUIDANCE,
                       }));
                       return;
                     }
