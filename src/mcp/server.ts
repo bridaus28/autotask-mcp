@@ -131,6 +131,17 @@ export function askTier(priorAsks: number, priorIdenticalAttempts: number): AskT
   return priorAsks === 0 ? 'repeat' : 'spell';
 }
 
+// The company answer settled the account; several people at it share this
+// phone, so the person is still open. She may say the company back because the
+// CALLER supplied it -- that is the one company name that did not come off a
+// record. The people on file stay internal as always.
+export const COMPANY_SETTLED_GUIDANCE =
+  'The account is settled from the company the caller gave you. Several people ' +
+  'there share this phone, so who is calling is still open. You may say the ' +
+  'company back - they said it themselves - then ask who you are speaking with ' +
+  'and call again with their name and this company_id. Never name or list the ' +
+  'people on file.';
+
 export const NO_NAME_GUIDANCE = 'No name yet, and that is fine \u2014 nothing was looked up, so there is nothing to tell the caller. Ask who you are speaking with, then call again with their answer. Never use a name the caller did not say.';
 
 
@@ -854,6 +865,20 @@ const riderB = await namesakeRider();
                       }));
                       return;
                     }
+                    if (cv.status === 'company_only') {
+                      this.logger.info('Contact lock: company settled, contact still open', {
+                        spokenCompany, companyId: cv.companyId, contactsAtCompany: cv.count,
+                      });
+                      res.writeHead(200, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({
+                        status: 'candidates',
+                        count: cv.count,
+                        company_id: cv.companyId,
+                        company_name: byCompany.get(cv.companyId)?.name ?? null,
+                        guidance: COMPANY_SETTLED_GUIDANCE,
+                      }));
+                      return;
+                    }
                     if (cv.status === 'ambiguous_residential') {
                       res.writeHead(200, { 'Content-Type': 'application/json' });
                       res.end(JSON.stringify({
@@ -863,6 +888,17 @@ const riderB = await namesakeRider();
                       }));
                       return;
                     }
+                    // Diagnostic (2026-08-30): a live no_match disagreed with a
+                    // replay of the matcher over the same candidates, and the
+                    // difference could only be the candidate list this branch
+                    // actually built. Log what was scored so the next one is
+                    // explicable rather than argued about.
+                    this.logger.info('Contact lock: company answer did not match', {
+                      spokenCompany,
+                      candidateCount: candidates.length,
+                      namedCandidates: candidates.filter(c => c.companyName).length,
+                      companiesScored: [...new Set(candidates.map(c => c.companyName))],
+                    });
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({
                       status: 'company_no_match',

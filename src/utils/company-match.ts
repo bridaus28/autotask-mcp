@@ -32,6 +32,9 @@ export type CompanyVerdict =
   | { status: 'ambiguous_company'; count: number }
   | { status: 'ambiguous_residential'; count: number }
   | { status: 'company_no_match' }
+  // The company answer settled the ACCOUNT but not the PERSON: every top
+  // scorer is the same company, carried by several contacts on this phone.
+  | { status: 'company_only'; companyId: number; count: number }
   | { status: 'no_answer' };
 
 const norm = (s: unknown): string =>
@@ -117,6 +120,24 @@ export function matchSpokenCompany(
   if (scored[0].score === 0) return { status: 'company_no_match' };
 
   const best = scored.filter(x => x.score === scored[0].score);
+
+  // Scoring runs per CONTACT, so a company is scored once per person of theirs
+  // on this phone. Seven colleagues at one account produced seven identical top
+  // scores and the old tie check read that as ambiguity, refusing to lock -- so
+  // the account became unreachable from that phone even when the caller said its
+  // name exactly (Brian's test call, conv_5201..., 2026-08-30).
+  //
+  // The tie that matters is between COMPANIES. But resolving the company does
+  // NOT resolve the person, and this verdict feeds a response carrying
+  // first_name/last_name: picking a contact here would have answered Brian as
+  // "Tom", the primary contact at his account. So one company with several
+  // contacts settles the account and stops -- the caller is asked who they are.
+  const bestCompanyIds = new Set(
+    best.map(x => x.c.companyId).filter((id): id is number => id != null)
+  );
+  if (bestCompanyIds.size > 1) {
+    return { status: 'ambiguous_company', count: bestCompanyIds.size };
+  }
   if (best.length === 1) {
     return {
       status: 'locked',
@@ -124,5 +145,9 @@ export function matchSpokenCompany(
       via: best[0].exact > 0 ? 'exact_token' : 'fuzzy_token',
     };
   }
+  if (bestCompanyIds.size === 1) {
+    return { status: 'company_only', companyId: [...bestCompanyIds][0], count: best.length };
+  }
+  // Several tied candidates carrying no company id at all: nothing to settle.
   return { status: 'ambiguous_company', count: best.length };
 }
