@@ -592,3 +592,72 @@ export function techNamesakeRider(techFirst: string): string {
     `asking to reach our ${n} rather than giving their own name, use the tech-status ` +
     `tool for that, and lock again when the actual caller gives their name.`;
 }
+
+// ─── Greeting decision at LOCK time (2026-08-30) ─────────────────────────────
+// The locked verdict shipped without a guidance field while every other verdict
+// had one. With nothing telling her how to speak a successful lock, the agent
+// read the field name back to the caller: "I have you locked in", 31 times in
+// one week's 913 agent turns, plus "in our system" 21 and "pulled up" 16.
+//
+// Filling that gap needs one decision: is the name news to the caller? Across
+// all 81 locked verdicts on the current agent, 80% were the agent repeating a
+// name the caller had given one second earlier. The remaining 20% split into
+// the record differing from what she heard (12%) and no name spoken at all
+// (7%) -- both worth saying, the first as confirmation and the second as the
+// caller's chance to correct a phone-only match.
+//
+// The comparison must be PHONETIC. Edit distance is wrong in both directions
+// here: Sarah/Sara is one edit and inaudible, while Eanya/Tanya is also one
+// edit and plainly a different name to the ear. Soundex separates every case
+// observed in the corpus.
+const SOUNDEX_CODES: Record<string, string> = {
+  b: '1', f: '1', p: '1', v: '1',
+  c: '2', g: '2', j: '2', k: '2', q: '2', s: '2', x: '2', z: '2',
+  d: '3', t: '3',
+  l: '4',
+  m: '5', n: '5',
+  r: '6',
+};
+
+// A successful lock used to carry no guidance at all, so the agent invented her
+// own line and what she invented was the field name: "I have you locked in."
+// These two say what to do instead. Which one ships is decided by nameIsNews,
+// server-side; the agent is never asked to judge whether her own greeting is
+// worth saying.
+export const LOCKED_SKIP_GUIDANCE =
+  'Go straight to what they called about.';
+export const LOCKED_GREET_GUIDANCE =
+  'Greet them by first name, then go to what they called about.';
+
+/** Standard four-character Soundex. Empty string for input with no letters. */
+export function soundex(value?: string | null): string {
+  const s = String(value ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!s) return '';
+  let out = s[0].toUpperCase();
+  let previous = SOUNDEX_CODES[s[0]] ?? '';
+  for (const ch of s.slice(1)) {
+    const code = SOUNDEX_CODES[ch] ?? '';
+    if (code && code !== previous) out += code;
+    // h and w are transparent: they do not reset the previous code, so
+    // "Ashcraft" keeps a single 2. Vowels do reset it.
+    if (ch !== 'h' && ch !== 'w') previous = code;
+    if (out.length === 4) break;
+  }
+  return (out + '000').slice(0, 4);
+}
+
+/**
+ * Would greeting the caller by name tell them something they do not already
+ * know? True when no name was spoken (the phone or the account resolved them,
+ * so the name is news and their cue to correct it), or when the name the agent
+ * is about to SAY sounds different from the one she heard.
+ *
+ * Only the first name is compared, because the first name is all she says.
+ */
+export function nameIsNews(spokenFirst?: string | null, speakName?: string | null): boolean {
+  const heard = String(spokenFirst ?? '').trim();
+  if (!heard) return true;
+  const saying = String(speakName ?? '').trim();
+  if (!saying) return false;
+  return soundex(saying) !== soundex(heard);
+}

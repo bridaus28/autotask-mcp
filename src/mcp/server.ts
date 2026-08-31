@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts, nameIsNews, LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -770,32 +770,20 @@ export class AutotaskMcpServer {
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   if (verdict.status === 'locked') {
                     const c = verdict.contact;
-                    const riderA = await namesakeRider();
-                    res.end(JSON.stringify({
-                      status: 'locked', match: verdict.match, contact_id: c.id,
-                      company_id: c.companyID ?? knownCompanyID,
-                      company_name: await this.companyNameOf(c.companyID ?? knownCompanyID),
-                      first_name: c.firstName ?? null, last_name: c.lastName ?? null,
-                      goes_by: (c as any).middleInitial || null,
-                      is_primary: (c as any).primaryContact ?? false,
-                      ...(riderA ? { guidance: riderA } : {}),
-                    }));
+                    res.end(JSON.stringify(await this.lockedPayload({
+                      contact: c, companyId: c.companyID ?? knownCompanyID,
+                      match: verdict.match, spokenFirst, rider: await namesakeRider(),
+                    })));
                   } else if (verdict.status === 'candidates') {
                     const soleA = soleCandidateLock(verdict);
                     if (soleA) {
                       this.logger.info('Contact lock: sole exact-first candidate locked at verified company (S5)', {
                         company_id: knownCompanyID, contactId: soleA.id,
                       });
-const riderB = await namesakeRider();
-                      res.end(JSON.stringify({
-                        status: 'locked', match: 'sole_candidate', contact_id: soleA.id,
-                        company_id: soleA.companyID ?? knownCompanyID,
-                        company_name: await this.companyNameOf(soleA.companyID ?? knownCompanyID),
-                        first_name: soleA.firstName ?? null, last_name: soleA.lastName ?? null,
-                        goes_by: (soleA as any).middleInitial || null,
-                        is_primary: (soleA as any).primaryContact ?? false,
-                      ...(riderB ? { guidance: riderB } : {}),
-                      }));
+                      res.end(JSON.stringify(await this.lockedPayload({
+                        contact: soleA, companyId: soleA.companyID ?? knownCompanyID,
+                        match: 'sole_candidate', spokenFirst, rider: await namesakeRider(),
+                      })));
                     } else if (orgShapedLast) {
                       res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID, guidance: ORG_SURNAME_GUIDANCE }));
                     } else if (priorIdenticalAttempts > 0) {
@@ -905,17 +893,12 @@ const riderB = await namesakeRider();
                         spokenCompany, via: cv.via, contactId: cand.contactId, companyId: cand.companyId,
                       });
                       res.writeHead(200, { 'Content-Type': 'application/json' });
-                      res.end(JSON.stringify({
-                        status: 'locked',
-                        match: `company_${cv.via}`,
-                        contact_id: cand.contactId,
-                        company_id: cand.companyId,
-                        company_name: cand.companyId != null ? (byCompany.get(cand.companyId)?.name ?? null) : null,
-                        first_name: full?.firstName ?? null,
-                        last_name: full?.lastName ?? null,
-                        goes_by: full?.middleInitial || null,
-                        is_primary: full?.primaryContact ?? false,
-                      }));
+                      res.end(JSON.stringify(await this.lockedPayload({
+                        contact: full, contactId: cand.contactId,
+                        companyId: cand.companyId,
+                        companyName: cand.companyId != null ? (byCompany.get(cand.companyId)?.name ?? null) : null,
+                        match: `company_${cv.via}`, spokenFirst,
+                      })));
                       return;
                     }
                     if (cv.status === 'company_only') {
@@ -1004,17 +987,10 @@ const riderB = await namesakeRider();
                         companyIds, contactId: c.id, companyId: c.companyID, match: acrossPool.match,
                       });
                       res.writeHead(200, { 'Content-Type': 'application/json' });
-                      res.end(JSON.stringify({
-                        status: 'locked',
-                        match: acrossPool.match,
-                        contact_id: c.id,
-                        company_id: c.companyID ?? null,
-                        company_name: await this.companyNameOf(c.companyID),
-                        first_name: c.firstName ?? null,
-                        last_name: c.lastName ?? null,
-                        goes_by: c.middleInitial || null,
-                        is_primary: c.primaryContact ?? false,
-                      }));
+                      res.end(JSON.stringify(await this.lockedPayload({
+                        contact: c, companyId: c.companyID ?? null,
+                        match: acrossPool.match, spokenFirst,
+                      })));
                       return;
                     }
                   }
@@ -1056,23 +1032,10 @@ const riderB = await namesakeRider();
                 if (verdict.status === 'locked') {
                   const c = verdict.contact;
                   res.writeHead(200, { 'Content-Type': 'application/json' });
-const riderC = await namesakeRider();
-                  res.end(JSON.stringify({
-                    status: 'locked',
-                    match: verdict.match,
-                    contact_id: c.id,
-                    company_id: c.companyID ?? companyID,
-                    company_name: await this.companyNameOf(c.companyID ?? companyID),
-                    first_name: c.firstName ?? null,
-                    last_name: c.lastName ?? null,
-                    // Nickname the caller may actually go by (CV convention:
-                    // Autotask middleInitial). Returned separately so the agent
-                    // speaks a clean first name instead of reading a combined
-                    // "Cassandra (Sandy)" string aloud.
-                    goes_by: (c as any).middleInitial || null,
-                    is_primary: (c as any).primaryContact ?? false,
-                      ...(riderC ? { guidance: riderC } : {}),
-                  }));
+                  res.end(JSON.stringify(await this.lockedPayload({
+                    contact: c, companyId: c.companyID ?? companyID,
+                    match: verdict.match, spokenFirst, rider: await namesakeRider(),
+                  })));
                   return;
                 }
                 if (verdict.status === 'candidates') {
@@ -1082,16 +1045,10 @@ const riderC = await namesakeRider();
                     this.logger.info('Contact lock: sole exact-first candidate locked at phone-verified company (S5)', {
                       companyID, contactId: soleB.id,
                     });
-const riderD = await namesakeRider();
-                    res.end(JSON.stringify({
-                      status: 'locked', match: 'sole_candidate', contact_id: soleB.id,
-                      company_id: soleB.companyID ?? companyID,
-                      company_name: await this.companyNameOf(soleB.companyID ?? companyID),
-                      first_name: soleB.firstName ?? null, last_name: soleB.lastName ?? null,
-                      goes_by: (soleB as any).middleInitial || null,
-                      is_primary: (soleB as any).primaryContact ?? false,
-                      ...(riderD ? { guidance: riderD } : {}),
-                    }));
+                    res.end(JSON.stringify(await this.lockedPayload({
+                      contact: soleB, companyId: soleB.companyID ?? companyID,
+                      match: 'sole_candidate', spokenFirst, rider: await namesakeRider(),
+                    })));
                     return;
                   }
                   if (orgShapedLast) {
@@ -1191,17 +1148,10 @@ const riderD = await namesakeRider();
             // unused on the ambiguous_company branch it is the only cure for.
             // match: 'id' rather than 'exact'/'fuzzy'; no name matching happened.
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-              status: 'locked',
+            res.end(JSON.stringify(await this.lockedPayload({
+              contact, contactId, companyId: contact.companyID ?? null,
               match: 'id',
-              contact_id: contact.id ?? contactId,
-              company_id: contact.companyID ?? null,
-              company_name: await this.companyNameOf(contact.companyID),
-              first_name: contact.firstName ?? null,
-              last_name: contact.lastName ?? null,
-              goes_by: (contact as any).middleInitial || null,
-              is_primary: contact.primaryContact ?? false,
-            }));
+            })));
           } catch (err) {
             this.logger.error('Contact lock error:', err);
             if (!res.headersSent) {
@@ -2286,6 +2236,55 @@ const riderD = await namesakeRider();
   // confirms the account from the RECORD, never from ASR or the caller's
   // assertion -- the Povina / Innovative Display Works class. Fail-soft null.
   private companyNameCache = new Map<number, { at: number; name: string | null }>();
+  /**
+   * The one shape of a successful contact lock. Seven call sites used to build
+   * this object literal by hand with the same nine fields; the guidance field
+   * was the only thing missing from all of them, and adding it in seven places
+   * is how the next field goes missing too.
+   *
+   * `rider` composes rather than replaces: before this, techNamesakeRider owned
+   * `guidance` outright, so a lock could never carry both a namesake warning
+   * and a greeting instruction.
+   */
+  private async lockedPayload(opts: {
+    contact: any;
+    contactId?: number | null;
+    companyId: number | null | undefined;
+    companyName?: string | null;
+    match: string;
+    spokenFirst?: string | null;
+    rider?: string | null;
+  }): Promise<Record<string, unknown>> {
+    const c = opts.contact ?? {};
+    const companyId = (opts.companyId ?? null) as number | null;
+    const companyName = opts.companyName !== undefined
+      ? opts.companyName
+      : await this.companyNameOf(companyId);
+    const firstName = c.firstName ?? null;
+    const goesBy = c.middleInitial || null;
+    // What she will actually say out loud, which is what the caller compares
+    // against the name they just gave.
+    const spoken = goesBy || firstName;
+    const greeting = nameIsNews(opts.spokenFirst, spoken)
+      ? LOCKED_GREET_GUIDANCE
+      : LOCKED_SKIP_GUIDANCE;
+    return {
+      status: 'locked',
+      match: opts.match,
+      contact_id: c.id ?? opts.contactId ?? null,
+      company_id: companyId,
+      company_name: companyName,
+      first_name: firstName,
+      last_name: c.lastName ?? null,
+      // Nickname the caller may actually go by (CV convention: Autotask
+      // middleInitial). Returned separately so the agent speaks a clean first
+      // name instead of reading a combined "Cassandra (Sandy)" string aloud.
+      goes_by: goesBy,
+      is_primary: c.primaryContact ?? false,
+      guidance: opts.rider ? `${greeting} ${opts.rider}` : greeting,
+    };
+  }
+
   private async companyNameOf(companyID: number | null | undefined): Promise<string | null> {
     const id = Number(companyID);
     if (!Number.isFinite(id) || id <= 0) return null;
