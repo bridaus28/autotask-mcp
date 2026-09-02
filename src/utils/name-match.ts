@@ -661,3 +661,37 @@ export function nameIsNews(spokenFirst?: string | null, speakName?: string | nul
   if (!saying) return false;
   return soundex(saying) !== soundex(heard);
 }
+
+// ─── Ticket-number searches require the whole number (2026-08-31) ────────────
+// autotask_search_tickets does beginsWith on ticketNumber with no company
+// filter, so a date prefix returned every ticket created that day across the
+// tenant, customer names in the titles, to any caller. On 2026-08-31 13:09 a
+// caller who was never identified said "Ticket T20260831." and got 25 rows;
+// 20 seconds later a note meant for his own ticket also landed on the first row
+// of that list, another customer's. Enumeration was never the intent -- the
+// prefix exists so a caller with a partial number can find their ticket -- but
+// nothing enforced the difference.
+//
+// Normalising rather than merely validating, because the corpus shows the
+// caller's own punctuation does not survive speech: "T202606090005" appeared
+// twice, a complete number with the "point" dropped by STT. Those two searches
+// return nothing today, since beginsWith against a stored "T20260609.0005"
+// cannot match. So this fixes a silent miss as well as closing the hole.
+const TICKET_NUMBER = /^t?(\d{8})\D?(\d{4})$/i;
+
+/**
+ * Canonical "T########.####" for a spoken ticket number, or null when what was
+ * given is not a whole one. Punctuation and spacing are ignored; the digits
+ * decide.
+ */
+export function normalizeTicketNumber(spoken?: string | null): string | null {
+  const raw = String(spoken ?? '').trim();
+  if (!raw) return null;
+  const m = TICKET_NUMBER.exec(raw.replace(/[\s–—]/g, ''));
+  return m ? `T${m[1]}.${m[2]}` : null;
+}
+
+export const PARTIAL_TICKET_GUIDANCE =
+  'A ticket lookup needs the whole number, both the date part and the four ' +
+  'digits after it. Ask the caller for the rest of it, then call again. ' +
+  'Nothing was looked up, so there is nothing to tell them yet.';

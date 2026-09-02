@@ -3,7 +3,7 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { AutotaskService, resolveTicketQuery, isNotFoundError, isExactPhoneMatch } from '../services/autotask.service.js';
-import { matchSpokenName, isPlaceholderSpokenName, isCompanyNameAsSurname } from '../utils/name-match.js';
+import { matchSpokenName, isPlaceholderSpokenName, isCompanyNameAsSurname, normalizeTicketNumber, PARTIAL_TICKET_GUIDANCE } from '../utils/name-match.js';
 import { RecentWrites } from '../utils/recent-writes.js';
 import { PicklistCache, PicklistValue } from '../services/picklist.cache.js';
 import { Logger } from '../utils/logger.js';
@@ -715,6 +715,22 @@ export class AutotaskToolHandler {
 
       // Tickets
       ['autotask_search_tickets', async (a) => {
+        // A ticket-number search takes the WHOLE number. A prefix used to run a
+        // tenant-wide beginsWith and hand back every ticket sharing it, which is
+        // how another customer's ticket reached an unidentified caller's context
+        // on 2026-08-31 (conv ...q04v34ae). Refused before any query runs, so
+        // nothing is read and nothing enters the transcript to be written to
+        // later. Normalising also rescues the dotless form STT produces.
+        if (a.searchTerm !== undefined && a.searchTerm !== null && String(a.searchTerm).trim() !== '') {
+          const whole = normalizeTicketNumber(a.searchTerm);
+          if (!whole) {
+            return {
+              result: { status: 'partial_ticket_number', searched: false },
+              message: PARTIAL_TICKET_GUIDANCE,
+            };
+          }
+          a = { ...a, searchTerm: whole };
+        }
         // Elicitation for zero-filter ticket searches
       const hasFilters = a.searchTerm || a.contactID || a.companyID || a.status !== undefined ||
         a.assignedResourceID || a.unassigned ||
