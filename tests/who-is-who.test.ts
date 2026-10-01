@@ -13,6 +13,7 @@ import {
   loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance,
   isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE,
   LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE,
+  ID_LOCK_NAME_REQUIRED_GUIDANCE, ID_LOCK_NAME_MISMATCH_GUIDANCE,
   RosterTech,
 } from '../src/utils/name-match';
 
@@ -63,7 +64,8 @@ describe('both-lists collision + target-or-self guidance', () => {
   it('affirmative-only: no prohibition phrasing', () => {
     for (const g of [targetOrSelfGuidance('Brian'), bothListsGuidance('Jason Miller'),
                      BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE,
-                     LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE]) {
+                     LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE,
+                     ID_LOCK_NAME_REQUIRED_GUIDANCE, ID_LOCK_NAME_MISMATCH_GUIDANCE]) {
       expect(g).not.toMatch(/\bdo not\b|\bdon'?t\b/i);
     }
   });

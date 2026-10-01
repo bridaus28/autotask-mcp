@@ -10,6 +10,7 @@ import { Logger } from '../utils/logger.js';
 import { formatCompactResponse, detectEntityType, COMPACT_SEARCH_TOOLS } from '../utils/response.formatter.js';
 import { MappingService } from '../utils/mapping.service.js';
 import { TOOL_DEFINITIONS } from './tool.definitions.js';
+import { queueForTicket, CATCH_ALL_COMPANY_ID } from '../utils/ticket-queue';
 
 // ─── Email values that are NOT identity ──────────────────────────────────────
 // Sentinels used where a real address is unknown. Measured against live
@@ -367,12 +368,20 @@ export class AutotaskToolHandler {
         // customer_type drives routing-relevant classification (ROUTING_VALIDATION_2026-06-12):
         // residential accounts misroute to Business Support unless classified at create time.
         const { customer_type, ...rest } = a;
-        if (customer_type !== 'business' && customer_type !== 'residential') {
-          throw new Error('customer_type is required and must be "business" or "residential". Ask the caller which they are if unclear.');
+        if (customer_type !== 'business' && customer_type !== 'residential' && customer_type !== 'vendor') {
+          throw new Error('customer_type is required and must be "business", "residential", or "vendor". Ask the caller which they are if unclear.');
         }
         const phoneDigits = String(rest.phone ?? '').replace(/\D/g, '');
         if (phoneDigits.length < 7) {
           throw new Error('phone must be the caller\'s real phone number (the number they are calling from). Placeholders are not accepted.');
+        }
+        if (customer_type === 'vendor') {
+          // A supplier, recycler, carrier or other outside party (2026-09-30,
+          // conv_4001m3dcbaede4rvxjnnybgfq2p9: an e-waste recycler had no
+          // path to a record). Companies.companyType 7 = Vendor,
+          // classification 200 = Vendor; both verified live 2026-09-29.
+          rest.companyType = 7;
+          rest.classification = 200;
         }
         if (customer_type === 'residential') {
           rest.classification = 13;      // Residential — verified live 2026-06-12
@@ -835,7 +844,19 @@ export class AutotaskToolHandler {
         const r = await s.getTicket(a.ticketID, a.fullDetails); return { result: r, message: 'Ticket details retrieved successfully' };
       }],
       ['autotask_create_ticket', async (a) => {
-        const id = await s.createTicket(a);
+        // Queue is decided here from the account, never by the agent (see
+        // utils/ticket-queue.ts). Any queueID the agent passes is replaced.
+        let classification: number | null = null;
+        if (Number(a.companyID) !== CATCH_ALL_COMPANY_ID) {
+          try {
+            const co: any = await s.getCompany(Number(a.companyID));
+            classification = co?.classification != null ? Number(co.classification) : null;
+          } catch (e) {
+            this.logger.warn('create_ticket: company read failed; routing to Support 1', { companyID: a.companyID, error: (e as Error)?.message });
+          }
+        }
+        const queueID = queueForTicket(a.companyID, classification);
+        const id = await s.createTicket({ ...a, queueID });
         // Fetch the created ticket to get the ticket number for the caller
         let ticketNumber: string | undefined;
         try {

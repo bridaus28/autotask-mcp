@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts, nameIsNews, LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts, nameIsNews, LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE, idLockNameAgrees, ID_LOCK_NAME_REQUIRED_GUIDANCE, ID_LOCK_NAME_MISMATCH_GUIDANCE } from '../utils/name-match.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -1138,6 +1138,21 @@ export class AutotaskMcpServer {
             if (!contact) {
               res.writeHead(404, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: `Contact ${contactId} not found in Autotask.` }));
+              return;
+            }
+
+            // The id must agree with the name the caller gave (2026-09-30).
+            // No name: ask for it. Different name: refuse, and say so without
+            // naming the record. See idLockNameAgrees in name-match.ts.
+            if (!spokenFirst) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ status: 'name_required', guidance: ID_LOCK_NAME_REQUIRED_GUIDANCE }));
+              return;
+            }
+            if (!idLockNameAgrees(spokenFirst, (contact as any).firstName, (contact as any).goesBy)) {
+              this.logger.warn('contact_id lock refused: spoken name does not match record', { contactId, spokenFirst });
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ status: 'name_mismatch', spoken_first: spokenFirst, guidance: ID_LOCK_NAME_MISMATCH_GUIDANCE }));
               return;
             }
 

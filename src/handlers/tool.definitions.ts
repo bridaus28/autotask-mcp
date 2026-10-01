@@ -84,7 +84,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_company',
-    description: 'Create a new company (account) in Autotask. companyName, customer_type, and phone are required. customer_type: "residential" for home customers (companyName = "Lastname, Firstname" from the caller\'s name; routing classification is set server-side) or "business" (companyName = the company\'s stated name, spelled by the caller). phone must be the number the caller is calling from, never a placeholder — it lets future calls recognize this customer. companyType is an optional picklist integer (defaults to 1 = Customer); use autotask_get_field_info with entityType "Companies" for other valid values. Do NOT search for or pass ownerResourceID — the server assigns the account owner automatically.',
+    description: 'Create a new company (account) in Autotask. companyName, customer_type, and phone are required. customer_type: "residential" for home customers (companyName = "Lastname, Firstname" from the caller\'s name; routing classification is set server-side), "business" (companyName = the company\'s stated name, spelled by the caller), or "vendor" for a supplier, recycler, carrier or other outside party that is not a customer (companyName as stated; type and classification set server-side). phone must be the number the caller is calling from, never a placeholder — it lets future calls recognize this customer. companyType is an optional picklist integer (defaults to 1 = Customer); use autotask_get_field_info with entityType "Companies" for other valid values. Do NOT search for or pass ownerResourceID — the server assigns the account owner automatically.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -94,8 +94,8 @@ export const TOOL_DEFINITIONS: McpTool[] = [
         },
         customer_type: {
           type: 'string',
-          enum: ['business', 'residential'],
-          description: 'Required. Whether this account is a business or a residential (home) customer. Residential accounts are auto-classified for Home Support routing. Ask the caller if not already clear from the conversation.'
+          enum: ['business', 'residential', 'vendor'],
+          description: 'Required. business = a customer company; residential = a home customer; vendor = a supplier, recycler, carrier or other outside party that is not a customer. Residential accounts are auto-classified for Home Support routing. Ask the caller if not already clear from the conversation.'
         },
         companyType: {
           type: 'number',
@@ -350,7 +350,7 @@ export const TOOL_DEFINITIONS: McpTool[] = [
   },
   {
     name: 'autotask_create_ticket',
-    description: 'Create a new ticket in Autotask. companyID, title, description, status, and priority are required. Pass these integers directly — no picklist lookup needed: status: always 1 (New) for new tickets. priority: 2 (Medium) by default; 1 (High) for urgent, 4 (Critical) for security or down-systems, 3 (Low) for FYI. Do not assign the ticket to a technician — new tickets are left unassigned for the dispatch queue. contactID must belong to the same company as companyID.',
+    description: 'Create a new ticket in Autotask. companyID, title, description, status, and priority are required. Pass these integers directly — no picklist lookup needed: status: always 1 (New) for new tickets. priority: 2 (Medium) by default; 1 (High) for urgent, 4 (Critical) for security or down-systems, 3 (Low) for FYI. Do not assign the ticket to a technician — new tickets are left unassigned for dispatch. The queue is set by the server from the account (residential → Shop, unverified → Leads, business → Support 1); never pass queueID. contactID must belong to the same company as companyID.',
     inputSchema: {
       type: 'object',
       properties: {

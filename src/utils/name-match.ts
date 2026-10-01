@@ -695,3 +695,30 @@ export const PARTIAL_TICKET_GUIDANCE =
   'A ticket lookup needs the whole number, both the date part and the four ' +
   'digits after it. Ask the caller for the rest of it, then call again. ' +
   'Nothing was looked up, so there is nothing to tell them yet.';
+
+// ─── A contact_id lock must agree with the name the caller gave (2026-09-30) ──
+//
+// conv_4001m3dcbaede4rvxjnnybgfq2p9 (09-25): a caller who had said "Rebecca",
+// unknown phone, unknown company, was locked by contact_id as a different
+// person at a different company and then read that company's open ticket.
+// The id path did no corroboration at all: any valid id became a lock. The
+// cheapest check that would have refused it is the one the greeting already
+// uses -- does the record's first name sound like the one she heard? Phone is
+// deliberately not part of this: Autotask phone data is uneven, and the name
+// is enough to separate Rebecca from Billy.
+
+export const ID_LOCK_NAME_REQUIRED_GUIDANCE =
+  'Pass spoken_first with contact_id: the first name the caller gave this call.';
+export const ID_LOCK_NAME_MISMATCH_GUIDANCE =
+  'That record is not the caller. Continue the identity flow with the name the caller gave.';
+
+/**
+ * True when the spoken first name sounds like the record's first name or
+ * goes-by name. An empty spoken name is answered with a request for it (see
+ * ID_LOCK_NAME_REQUIRED_GUIDANCE), not a match.
+ */
+export function idLockNameAgrees(spokenFirst?: string | null, recordFirst?: string | null, recordGoesBy?: string | null): boolean {
+  const heard = soundex(spokenFirst);
+  if (!heard) return false;
+  return heard === soundex(recordFirst) || (Boolean(recordGoesBy) && heard === soundex(recordGoesBy));
+}
