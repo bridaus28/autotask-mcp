@@ -118,3 +118,24 @@ describe('autotask_create_company customer_type "vendor" (2026-09-30)', () => {
     expect(def.inputSchema.properties.customer_type.enum).toEqual(['business', 'residential', 'vendor']);
   });
 });
+
+import { resolveQueueID } from '../src/utils/ticket-queue';
+describe('resolveQueueID (shared by create_ticket and call closure)', () => {
+  test('reads the company once and applies the rule', async () => {
+    const calls: number[] = [];
+    const q = await resolveQueueID(5922, async (id) => { calls.push(id); return { classification: 13 }; });
+    expect(q).toBe(QUEUE_SHOP); expect(calls).toEqual([5922]);
+  });
+  test('catch-all company: Leads, no read', async () => {
+    const q = await resolveQueueID(0, async () => { throw new Error('should not be called'); });
+    expect(q).toBe(QUEUE_LEADS);
+  });
+  test('undefined company (closure with no default company): Leads', async () => {
+    expect(await resolveQueueID(undefined, async () => ({ classification: 13 }))).toBe(QUEUE_LEADS);
+  });
+  test('read throws: Support 1, warning logged', async () => {
+    const warns: string[] = [];
+    const q = await resolveQueueID(840, async () => { throw new Error('500'); }, { warn: (m) => warns.push(m) });
+    expect(q).toBe(QUEUE_SUPPORT_1); expect(warns).toHaveLength(1);
+  });
+});

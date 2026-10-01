@@ -38,3 +38,28 @@ export function queueForTicket(companyID: number | null | undefined, classificat
   if (Number(classification) === CLASSIFICATION_RESIDENTIAL) return QUEUE_SHOP;
   return QUEUE_SUPPORT_1;
 }
+
+/**
+ * The rule applied end to end: read the company's classification (unless it
+ * is the catch-all) and return the queue. Used by both places a ticket is
+ * created for a caller: the agent's autotask_create_ticket and the
+ * call-closure report. A failed company read is logged and routes to
+ * Support 1; it never blocks the ticket.
+ */
+export async function resolveQueueID(
+  companyID: number | null | undefined,
+  getCompany: (id: number) => Promise<any>,
+  logger?: { warn: (msg: string, meta?: any) => void },
+): Promise<number> {
+  let classification: number | null = null;
+  const id = Number(companyID);
+  if (Number.isFinite(id) && id !== CATCH_ALL_COMPANY_ID) {
+    try {
+      const co: any = await getCompany(id);
+      classification = co?.classification != null ? Number(co.classification) : null;
+    } catch (e) {
+      logger?.warn('ticket queue: company read failed; routing to Support 1', { companyID, error: (e as Error)?.message });
+    }
+  }
+  return queueForTicket(companyID, classification);
+}

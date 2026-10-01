@@ -10,7 +10,7 @@ import { Logger } from '../utils/logger.js';
 import { formatCompactResponse, detectEntityType, COMPACT_SEARCH_TOOLS } from '../utils/response.formatter.js';
 import { MappingService } from '../utils/mapping.service.js';
 import { TOOL_DEFINITIONS } from './tool.definitions.js';
-import { queueForTicket, CATCH_ALL_COMPANY_ID } from '../utils/ticket-queue';
+import { resolveQueueID } from '../utils/ticket-queue';
 
 // ─── Email values that are NOT identity ──────────────────────────────────────
 // Sentinels used where a real address is unknown. Measured against live
@@ -846,16 +846,7 @@ export class AutotaskToolHandler {
       ['autotask_create_ticket', async (a) => {
         // Queue is decided here from the account, never by the agent (see
         // utils/ticket-queue.ts). Any queueID the agent passes is replaced.
-        let classification: number | null = null;
-        if (Number(a.companyID) !== CATCH_ALL_COMPANY_ID) {
-          try {
-            const co: any = await s.getCompany(Number(a.companyID));
-            classification = co?.classification != null ? Number(co.classification) : null;
-          } catch (e) {
-            this.logger.warn('create_ticket: company read failed; routing to Support 1', { companyID: a.companyID, error: (e as Error)?.message });
-          }
-        }
-        const queueID = queueForTicket(a.companyID, classification);
+        const queueID = await resolveQueueID(a.companyID, (id) => s.getCompany(id), this.logger);
         const id = await s.createTicket({ ...a, queueID });
         // Fetch the created ticket to get the ticket number for the caller
         let ticketNumber: string | undefined;

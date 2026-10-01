@@ -25,6 +25,7 @@ import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
 import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts, nameIsNews, LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE, idLockNameAgrees, ID_LOCK_NAME_REQUIRED_GUIDANCE, ID_LOCK_NAME_MISMATCH_GUIDANCE } from '../utils/name-match.js';
+import { resolveQueueID } from '../utils/ticket-queue.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -2179,6 +2180,11 @@ export class AutotaskMcpServer {
               }
             }
 
+            // Same queue rule as autotask_create_ticket (2026-10-01): the
+            // closure is where unverified intake and abandoned calls become
+            // tickets, so without this most Leads and Shop work still landed
+            // on the category default.
+            ticket.queueID = await resolveQueueID(ticket.companyID, (id) => this.autotaskService.getCompany(id), this.logger);
             const ticketId = await this.autotaskService.createTicket(ticket);
 
             // Fetch the created ticket to get the ticket number
