@@ -26,6 +26,7 @@ import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
 import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts, nameIsNews, LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE, idLockNameAgrees, ID_LOCK_NAME_REQUIRED_GUIDANCE, ID_LOCK_NAME_MISMATCH_GUIDANCE, phoneTiebreak } from '../utils/name-match.js';
 import { resolveQueueID } from '../utils/ticket-queue.js';
+import { closureSummary } from '../utils/closure-summary.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
 
@@ -1879,7 +1880,7 @@ export class AutotaskMcpServer {
             const cnamCarrier = String(dynVars.line_type_carrier || '').trim();
             const durationSecs = metadata.call_duration_secs || null;
             const durationStr = durationSecs != null ? `${Math.ceil(durationSecs / 60)} min (${durationSecs}s)` : 'Unknown';
-            const summary = analysis.transcript_summary || 'No summary available.';
+            const summary = closureSummary(analysis);
             const transferredTo = dataCollection.call_routed_to?.value ?? null;
             const businessStatus = dynVars.business_status || 'Unknown';
             const termination = metadata.termination_reason || 'unknown';
