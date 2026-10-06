@@ -24,7 +24,7 @@ import { EnvironmentConfig, parseCredentialsFromHeaders, GatewayCredentials } fr
 import { AutotaskResourceHandler } from '../handlers/resource.handler.js';
 import { AutotaskToolHandler } from '../handlers/tool.handler.js';
 import { RECEPTIONIST_TOOL_NAMES } from '../handlers/tool.definitions.js';
-import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts, nameIsNews, LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE, idLockNameAgrees, ID_LOCK_NAME_REQUIRED_GUIDANCE, ID_LOCK_NAME_MISMATCH_GUIDANCE } from '../utils/name-match.js';
+import { matchSpokenName, PoolContact, soleCandidateLock, RepeatedLockAttempts, REPEAT_CANDIDATES_GUIDANCE, REPEAT_NEW_CONTACT_GUIDANCE, isPlaceholderSpokenName, isOrgShapedSurname, ORG_SURNAME_GUIDANCE, spokenNameMatchesTech, RosterTech, TECH_NAME_GUIDANCE, loneFirstTechMatch, targetOrSelfGuidance, bothListsGuidance, isBusinessLiteralAnswer, BUSINESS_LITERAL_GUIDANCE, AMBIGUOUS_COMPANY_GUIDANCE, spokenEqualsTech, isNearMissSurname, isNearMissFirstName, techNamesakeRider, sameSoulAcrossAccounts, nameIsNews, LOCKED_SKIP_GUIDANCE, LOCKED_GREET_GUIDANCE, idLockNameAgrees, ID_LOCK_NAME_REQUIRED_GUIDANCE, ID_LOCK_NAME_MISMATCH_GUIDANCE, phoneTiebreak } from '../utils/name-match.js';
 import { resolveQueueID } from '../utils/ticket-queue.js';
 import { matchSpokenCompany, CompanyCandidate } from '../utils/company-match.js';
 import { PicklistCache } from '../services/picklist.cache.js';
@@ -785,6 +785,15 @@ export class AutotaskMcpServer {
                         contact: soleA, companyId: soleA.companyID ?? knownCompanyID,
                         match: 'sole_candidate', spokenFirst, rider: await namesakeRider(),
                       })));
+                    } else if (phoneTiebreak(verdict, callerPhone)) {
+                      const tb = phoneTiebreak(verdict, callerPhone)!;
+                      this.logger.info('Contact lock: phone tiebreak among same-name candidates', {
+                        company_id: knownCompanyID, contactId: tb.id, count: verdict.count,
+                      });
+                      res.end(JSON.stringify(await this.lockedPayload({
+                        contact: tb, companyId: tb.companyID ?? knownCompanyID,
+                        match: 'phone_tiebreak', spokenFirst, rider: await namesakeRider(),
+                      })));
                     } else if (orgShapedLast) {
                       res.end(JSON.stringify({ status: 'candidates', count: verdict.count, company_id: knownCompanyID, guidance: ORG_SURNAME_GUIDANCE }));
                     } else if (priorIdenticalAttempts > 0) {
@@ -1049,6 +1058,17 @@ export class AutotaskMcpServer {
                     res.end(JSON.stringify(await this.lockedPayload({
                       contact: soleB, companyId: soleB.companyID ?? companyID,
                       match: 'sole_candidate', spokenFirst, rider: await namesakeRider(),
+                    })));
+                    return;
+                  }
+                  const tbB = phoneTiebreak(verdict, callerPhone);
+                  if (tbB) {
+                    this.logger.info('Contact lock: phone tiebreak among same-name candidates', {
+                      companyID, contactId: tbB.id, count: verdict.count,
+                    });
+                    res.end(JSON.stringify(await this.lockedPayload({
+                      contact: tbB, companyId: tbB.companyID ?? companyID,
+                      match: 'phone_tiebreak', spokenFirst, rider: await namesakeRider(),
                     })));
                     return;
                   }

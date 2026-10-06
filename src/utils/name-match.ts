@@ -31,7 +31,10 @@ export type MatchVerdict =
   // sole/soleBasis (S5, 2026-08-15): when exactly one candidate exists, carry it
   // and how it matched so the CALLER of this function can decide whether policy
   // allows locking it (phone-verified company). Never serialized to the agent.
-  | { status: 'candidates'; count: number; sole?: PoolContact; soleBasis?: 'exact_first' | 'fuzzy' }
+  // members (2026-10-06): the contacts the spoken name matched, when there are
+  // two or more, so the caller of this function can break the tie by phone.
+  // Never serialized to the agent.
+  | { status: 'candidates'; count: number; sole?: PoolContact; soleBasis?: 'exact_first' | 'fuzzy'; members?: PoolContact[] }
   | { status: 'new_contact' };
 
 const norm = (s: unknown): string =>
@@ -146,7 +149,7 @@ export function matchSpokenName(
         return { status: 'locked', contact: x.c, match: x.d === 0 && x.fd === 0 ? 'exact' : 'fuzzy' };
       }
     }
-    return { status: 'candidates', count: best.length };
+    return { status: 'candidates', count: best.length, members: best.map(x => x.c) };
   }
 
   // First-name-only: a first name alone is too weak to fuzzy-lock. Short
@@ -169,7 +172,8 @@ export function matchSpokenName(
     // function can ever lock it: short first names collide (Tanya -> Tony).
     return { status: 'candidates', count: 1, sole: firstMatches[0].c, soleBasis: 'fuzzy' };
   }
-  return { status: 'candidates', count: exact.length > 1 ? exact.length : firstMatches.length };
+  const tied = exact.length > 1 ? exact : firstMatches;
+  return { status: 'candidates', count: tied.length, members: tied.map(x => x.c) };
 }
 
 /**
@@ -721,4 +725,30 @@ export function idLockNameAgrees(spokenFirst?: string | null, recordFirst?: stri
   const heard = soundex(spokenFirst);
   if (!heard) return false;
   return heard === soundex(recordFirst) || (Boolean(recordGoesBy) && heard === soundex(recordGoesBy));
+}
+
+// ─── Phone tiebreak (2026-10-06) ────────────────────────────────────────────
+//
+// Two or more contacts at a company match the spoken name. If exactly one of
+// them carries the phone the call is coming from, that is the caller. The
+// phone only chooses among people the caller's own name already matched; it
+// never adds anyone. Twilio's caller ID is the trusted side; Autotask phone
+// fields are messy, so they are reduced to digits and compared on the last
+// ten. "Unknown", blanks and short values never match. A phone shared by two
+// candidates (an office line) breaks nothing and the ask goes on as before.
+// conv_y5n26kr7 (10-02): two Sara Coumans records at one company, six lock
+// calls, a spelling, and both records' email domains read aloud.
+
+export function phoneKey(value?: string | null): string {
+  const d = String(value ?? '').replace(/\D/g, '');
+  return d.length >= 10 ? d.slice(-10) : '';
+}
+
+export function phoneTiebreak(verdict: MatchVerdict, callerPhone?: string | null): PoolContact | null {
+  if (verdict.status !== 'candidates' || !verdict.members || verdict.members.length < 2) return null;
+  const caller = phoneKey(callerPhone);
+  if (!caller) return null;
+  const hits = verdict.members.filter((c: any) =>
+    [c.phone, c.mobilePhone, c.alternatePhone].some(p => phoneKey(p) === caller));
+  return hits.length === 1 ? hits[0] : null;
 }
