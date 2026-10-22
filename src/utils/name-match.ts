@@ -218,6 +218,10 @@ export const NON_NAME_TOKENS = new Set<string>([
   'unknown', 'unkown', 'none', 'null', 'na', 'n/a', 'test', 'testing',
   'caller', 'customer', 'client', 'user', 'anonymous', 'guest', 'someone',
   'firstname', 'lastname', 'first', 'last', 'sir', 'madam', 'nobody',
+  // Request words (2026-10-22): a caller saying "Help" or "Operator" is asking
+  // for something, not giving a name. conv_7801m5jc (10-22) locked on "Help".
+  'help', 'operator', 'person', 'representative', 'rep', 'agent', 'human',
+  'manager', 'support', 'billing', 'sales', 'receptionist', 'hello', 'hi',
 ]);
 
 export const PLACEHOLDER_PAIRS = new Set<string>([
