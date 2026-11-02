@@ -58,6 +58,7 @@ export const EXCLUDED_QUEUE_IDS = new Set<number>([8]);
 // create-side guards share it without an import cycle). Re-exported here so
 // existing imports and tests keep checking the real function.
 export { isPlaceholderSpokenName, NON_NAME_TOKENS, PLACEHOLDER_PAIRS } from '../utils/name-match.js';
+import { buildUnidentifiedCallerLines } from '../utils/closure-clues.js';
 
 // The single answer for "you do not have a name". Deliberately identical whether
 // she called with a placeholder or called honestly with just the phone, because
@@ -1911,11 +1912,15 @@ export class AutotaskMcpServer {
               title = `[Unverified] ${unidLabel} - ${subjectClause}`.substring(0, 255);
             }
 
-            const callerLine = fullyIdentified
-              ? `Caller: ${callerName}`
+            const callerLines: string[] = fullyIdentified
+              ? [`Caller: ${callerName}`]
               : companyOnlyIdentified
-                ? `Caller: Unverified contact at ${effectiveCompanyName || `company ${effectiveCompanyId}`}`
-                : `Caller: Unidentified (no record on file for ${callerPhone})`;
+                ? [`Caller: Unverified contact at ${effectiveCompanyName || `company ${effectiveCompanyId}`}`]
+                : await buildUnidentifiedCallerLines(
+                    (p) => resolvePhoneAccount(this.autotaskService, p),
+                    async (id) => (await this.autotaskService.getCompany(id))?.companyName ?? null,
+                    callerPhone, payload.transcript,
+                  );
 
             const descriptionLines = [
               '== Ivy Call Closure Report ==',
@@ -1923,7 +1928,7 @@ export class AutotaskMcpServer {
               `Summary: ${summary}`,
               '',
               `Call Reason: ${callReason}`,
-              callerLine,
+              ...callerLines,
               `Caller Phone: ${callerPhone}`,
               cnamName ? `Caller ID Name (CNAM): ${cnamName}` : null,
               cnamType ? `Caller Type: ${cnamType}` : null,
