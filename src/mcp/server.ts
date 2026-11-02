@@ -779,7 +779,7 @@ export class AutotaskMcpServer {
                   } else if (verdict.status === 'candidates') {
                     const soleA = soleCandidateLock(verdict);
                     if (soleA) {
-                      this.logger.info('Contact lock: sole exact-first candidate locked at verified company (S5)', {
+                      this.logger.info('Contact lock: sole candidate locked at verified company (S5)', { basis: (verdict as any).soleBasis,
                         company_id: knownCompanyID, contactId: soleA.id,
                       });
                       res.end(JSON.stringify(await this.lockedPayload({
@@ -1053,7 +1053,7 @@ export class AutotaskMcpServer {
                   const soleB = soleCandidateLock(verdict);
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   if (soleB) {
-                    this.logger.info('Contact lock: sole exact-first candidate locked at phone-verified company (S5)', {
+                    this.logger.info('Contact lock: sole candidate locked at phone-verified company (S5)', { basis: (verdict as any).soleBasis,
                       companyID, contactId: soleB.id,
                     });
                     res.end(JSON.stringify(await this.lockedPayload({

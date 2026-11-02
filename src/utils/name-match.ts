@@ -34,7 +34,7 @@ export type MatchVerdict =
   // members (2026-10-06): the contacts the spoken name matched, when there are
   // two or more, so the caller of this function can break the tie by phone.
   // Never serialized to the agent.
-  | { status: 'candidates'; count: number; sole?: PoolContact; soleBasis?: 'exact_first' | 'fuzzy'; members?: PoolContact[] }
+  | { status: 'candidates'; count: number; sole?: PoolContact; soleBasis?: 'exact_first' | 'spelling_variant' | 'fuzzy'; members?: PoolContact[] }
   | { status: 'new_contact' };
 
 const norm = (s: unknown): string =>
@@ -54,6 +54,34 @@ export function editDistance(a: string, b: string): number {
 }
 
 const threshold = (s: string): number => (s.length <= 4 ? 1 : 2);
+
+/**
+ * Spelling-variant key (2026-11-02). Two first names with the same key are the
+ * same spoken name written two ways: STT writes what it hears, the record holds
+ * what the person spells. Sherry/Sherie, Catherine/Katherine, Terry/Teri,
+ * Manny/Manii. conv_6801m66x and conv_9201m66r (2026-10-30): a phone-verified
+ * caller said "Sherry" four times against a record "Sherie" and never locked.
+ *
+ * Deliberately NOT soundex or edit distance: Tanya and Tony are both T500 and
+ * two edits apart, and Tanya -> Tony Whetstone (2026-06-15) is the wrong-contact
+ * lock this file exists to prevent. These rules only fold spellings of one
+ * sound, so a different vowel or an extra syllable stays a different name.
+ */
+export function spellingKey(s: unknown): string {
+  return norm(s).replace(/ /g, '')
+    .replace(/ph/g, 'f')
+    .replace(/c(?=[aou])/g, 'k')
+    .replace(/(.)\1+/g, '$1')
+    .replace(/(ie|ey|ee|y|i)$/, 'i');
+}
+
+const firstNameTokens = (c: PoolContact): string[] => [...tokens(c.firstName), ...tokens(c.middleInitial)];
+
+/** True when the spoken first name is a spelling of one of the contact's first or goes-by names. */
+export function isSpellingVariant(spoken: unknown, c: PoolContact): boolean {
+  const k = spellingKey(spoken);
+  return k.length > 0 && firstNameTokens(c).some(t => spellingKey(t) === k);
+}
 
 /** Distance from one spoken name to the nearest token of a record field set. */
 function nameDistance(spoken: string, recordTokens: string[]): number {
@@ -162,8 +190,17 @@ export function matchSpokenName(
     .map(c => ({ c, d: score(first, c, 'all') }))
     .filter(x => x.d <= threshold(first))
     .sort((a, b) => a.d - b.d);
-  if (firstMatches.length === 0) return { status: 'new_contact' };
   const exact = firstMatches.filter(x => x.d === 0);
+  if (exact.length === 0) {
+    // A spelling of the same spoken name (Sherry for Sherie) is not a fuzzy
+    // guess. Scanned over the whole pool: Cathie/Kathy is 3 edits yet one sound.
+    // Exactly one such contact is reported as liftable; S5 decides.
+    const variants = pool.filter(c => isSpellingVariant(first, c));
+    if (variants.length === 1) {
+      return { status: 'candidates', count: 1, sole: variants[0], soleBasis: 'spelling_variant' };
+    }
+  }
+  if (firstMatches.length === 0) return { status: 'new_contact' };
   if (exact.length === 1) {
     return { status: 'locked', contact: exact[0].c, match: 'exact' };
   }
@@ -321,7 +358,7 @@ export const ORG_SURNAME_GUIDANCE =
 export function soleCandidateLock(verdict: MatchVerdict): PoolContact | null {
   if (verdict.status !== 'candidates') return null;
   if (verdict.count !== 1 || !verdict.sole) return null;
-  return verdict.soleBasis === 'exact_first' ? verdict.sole : null;
+  return verdict.soleBasis === 'exact_first' || verdict.soleBasis === 'spelling_variant' ? verdict.sole : null;
 }
 
 // ─── S4: a retry that cannot change the answer is not asked for (2026-08-15) ─
