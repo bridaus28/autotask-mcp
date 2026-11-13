@@ -42,7 +42,7 @@ export function noticeText(names: string[]): string {
   const list = names.length === 1
     ? names[0]
     : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-  return `Please note, we're tracking an issue with ${list} right now, and our team is on it.`;
+  return `Please note, our status page shows an issue with ${list} right now.`;
 }
 
 function decodeXml(s: string): string {

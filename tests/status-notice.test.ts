@@ -42,11 +42,11 @@ describe('affectedComponents', () => {
 describe('noticeText', () => {
   test('empty when clear', () => expect(noticeText([])).toBe(''));
   test('one component', () => {
-    expect(noticeText(['Microsoft 365'])).toBe("Please note, we're tracking an issue with Microsoft 365 right now, and our team is on it.");
+    expect(noticeText(['Microsoft 365'])).toBe('Please note, our status page shows an issue with Microsoft 365 right now.');
   });
   test('two and three components join naturally', () => {
-    expect(noticeText(['A', 'B'])).toContain('with A and B right now');
-    expect(noticeText(['A', 'B', 'C'])).toContain('with A, B and C right now');
+    expect(noticeText(['A', 'B'])).toContain('issue with A and B right now.');
+    expect(noticeText(['A', 'B', 'C'])).toContain('issue with A, B and C right now.');
   });
 });
 
