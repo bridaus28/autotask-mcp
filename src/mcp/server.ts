@@ -59,6 +59,7 @@ export const EXCLUDED_QUEUE_IDS = new Set<number>([8]);
 // existing imports and tests keep checking the real function.
 export { isPlaceholderSpokenName, NON_NAME_TOKENS, PLACEHOLDER_PAIRS } from '../utils/name-match.js';
 import { buildUnidentifiedCallerLines } from '../utils/closure-clues.js';
+import { getStatusNotice } from '../utils/status-notice.js';
 
 // The single answer for "you do not have a name". Deliberately identical whether
 // she called with a placeholder or called honestly with just the phone, because
@@ -1223,9 +1224,14 @@ export class AutotaskMcpServer {
 
         const respond = async () => {
           try {
-            const result = await this.autotaskService.getBusinessStatus();
+            // status_notice: outage line from the public status page, '' when clear.
+            // Fetched in parallel; getStatusNotice never throws.
+            const [result, status_notice] = await Promise.all([
+              this.autotaskService.getBusinessStatus(),
+              getStatusNotice(),
+            ]);
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(result));
+            res.end(JSON.stringify({ ...result, status_notice }));
           } catch (err) {
             this.logger.error('Business status error:', err);
             if (!res.headersSent) {
