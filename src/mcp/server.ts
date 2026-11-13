@@ -60,6 +60,7 @@ export const EXCLUDED_QUEUE_IDS = new Set<number>([8]);
 export { isPlaceholderSpokenName, NON_NAME_TOKENS, PLACEHOLDER_PAIRS } from '../utils/name-match.js';
 import { buildUnidentifiedCallerLines } from '../utils/closure-clues.js';
 import { getStatusNotice } from '../utils/status-notice.js';
+import { companySearchWord, pickSpokenCompany, exactFullNameLock, SPOKEN_COMPANY_SCOPE_RIDER, SPOKEN_COMPANY_NEED_LAST_GUIDANCE, SPOKEN_COMPANY_ASK_GUIDANCE } from '../utils/spoken-company-lock.js';
 
 // The single answer for "you do not have a name". Deliberately identical whether
 // she called with a placeholder or called honestly with just the phone, because
@@ -699,6 +700,9 @@ export class AutotaskMcpServer {
             const loneFirstRedirect = async (): Promise<string | null> => {
               if (parsed.contact_id || priorIdenticalAttempts > 0) return null;
               if (!spokenFirst || spokenLast) return null;
+              // A caller who names their company is introducing themselves, not
+              // asking for a teammate ("<staff first name> with <company>", 2026-11-12).
+              if (spokenCompany) return null;
               try {
                 const t = loneFirstTechMatch(spokenFirst, spokenLast, await this.getTechRoster());
                 return t ? targetOrSelfGuidance(String(t.firstName || spokenFirst)) : null;
@@ -848,12 +852,64 @@ export class AutotaskMcpServer {
                   // "Innovative DisplayWorks Inc. (IDW)": she created 6866 as a duplicate.
                   // What to do about an unknown phone is the consumer's policy, not this
                   // endpoint's, so it is no longer stated here.
+                  //
+                  // Spoken company (2026-11-12): the caller named their company, so try
+                  // it here instead of leaving Ivy to search and retry. Strict rule, see
+                  // spoken-company-lock.ts: one active non-residential company, exact
+                  // first AND last name. Anything less falls through unchanged.
+                  if (spokenCompany && !isBusinessLiteralAnswer(spokenCompany)) {
+                    if (spokenFirst && effectiveLast) {
+                      try {
+                        const word = companySearchWord(spokenCompany);
+                        const fetched = word ? await this.autotaskService.searchCompanies({ searchTerm: word, isActive: true, pageSize: 200 } as any) : [];
+                        // A full page means the list may be cut short, so "exactly one" cannot be trusted.
+                        const rows = (fetched || []).length >= 200 ? [] : (fetched || []);
+                        let residentialValue: string | null = null;
+                        try {
+                          const vals = await this.picklistCache.getPicklistValues('Companies', 'classification');
+                          residentialValue = vals.find(v => String(v.label).toLowerCase() === 'residential')?.value ?? null;
+                        } catch { residentialValue = null; }
+                        const co = pickSpokenCompany((rows || []).map((r: any) => ({
+                          id: r.id,
+                          companyName: r.companyName,
+                          // Unknown label: treat as residential, the side that does not lock.
+                          isResidential: residentialValue == null || String(r.classification) === String(residentialValue),
+                        })), spokenCompany);
+                        if (co) {
+                          const pool = await this.autotaskService.searchContacts({ companyID: co.id, pageSize: 200 } as any) as PoolContact[];
+                          const hit = exactFullNameLock(pool || [], spokenFirst, effectiveLast);
+                          this.logger.info('Contact lock: unknown phone, spoken company', {
+                            spokenCompany, companyId: co.id, poolSize: (pool || []).length, locked: Boolean(hit),
+                          });
+                          if (hit) {
+                            res.end(JSON.stringify(await this.lockedPayload({
+                              contact: hit, companyId: hit.companyID ?? co.id, companyName: co.companyName ?? null,
+                              match: 'spoken_company_exact', spokenFirst, rider: SPOKEN_COMPANY_SCOPE_RIDER,
+                            })));
+                            return;
+                          }
+                        } else {
+                          this.logger.info('Contact lock: unknown phone, spoken company not exactly one', { spokenCompany, searched: word, rows: (rows || []).length });
+                        }
+                      } catch (e) {
+                        this.logger.warn('Contact lock: spoken company lookup failed; falling back', { error: String(e) });
+                      }
+                    } else if (spokenFirst && !spokenLast) {
+                      res.end(JSON.stringify({ status: 'no_record', checked: 'caller_phone', guidance: SPOKEN_COMPANY_NEED_LAST_GUIDANCE }));
+                      return;
+                    }
+                  }
                   const gLone = await loneFirstRedirect();
                   if (gLone) {
                     res.end(JSON.stringify({ status: 'no_name_yet', guidance: gLone }));
                     return;
                   }
-                  res.end(JSON.stringify({ status: 'no_record', checked: 'caller_phone' }));
+                  // With no company yet, point at the one move that can place this caller.
+                  // Replay 10-29..11-12: 4 of 6 placeable callers named their company and
+                  // Ivy searched for it instead of passing it here.
+                  res.end(JSON.stringify(spokenCompany
+                    ? { status: 'no_record', checked: 'caller_phone' }
+                    : { status: 'no_record', checked: 'caller_phone', guidance: SPOKEN_COMPANY_ASK_GUIDANCE }));
                   return;
                 }
                 if (companyIds.length > 1) {
