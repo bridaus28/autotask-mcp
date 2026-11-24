@@ -59,6 +59,7 @@ export const EXCLUDED_QUEUE_IDS = new Set<number>([8]);
 // existing imports and tests keep checking the real function.
 export { isPlaceholderSpokenName, NON_NAME_TOKENS, PLACEHOLDER_PAIRS } from '../utils/name-match.js';
 import { buildUnidentifiedCallerLines } from '../utils/closure-clues.js';
+import { escalateOnRepeat, callerReportsPriorContact, priorityRank, type EscalationDeps } from '../utils/repeat-escalation.js';
 import { getStatusNotice } from '../utils/status-notice.js';
 import { companySearchWord, pickSpokenCompany, exactFullNameLock, SPOKEN_COMPANY_SCOPE_RIDER, SPOKEN_COMPANY_NEED_LAST_GUIDANCE, SPOKEN_COMPANY_ASK_GUIDANCE } from '../utils/spoken-company-lock.js';
 
@@ -2005,6 +2006,39 @@ export class AutotaskMcpServer {
             ];
             const description = descriptionLines.filter(line => line !== null).join('\n');
 
+            // -- Repeat-contact escalation (see utils/repeat-escalation.ts) --
+            // Every bind below goes through noteClosure: it follows a merged ticket to
+            // its target, raises a repeat call's ticket to High, and writes the note.
+            const callStartMs = Number(metadata.start_time_unix_secs) > 0
+              ? Number(metadata.start_time_unix_secs) * 1000
+              : Date.now() - (Number(metadata.call_duration_secs) || 0) * 1000;
+            const escalationDeps: EscalationDeps = {
+              getTicket: (id) => this.autotaskService.getTicket(id),
+              searchTicketNotes: (id) => this.autotaskService.searchTicketNotes(id),
+              findTicketByNumber: async (num) =>
+                (await this.autotaskService.searchTickets({ searchTerm: num }))
+                  .find(t => t.ticketNumber === num) ?? null,
+              updateTicket: (id, updates) => this.autotaskService.updateTicket(id, updates as any),
+              getPriorities: () => this.picklistCache.getTicketPriorities(),
+              warn: (msg, meta) => this.logger.warn(msg, meta),
+            };
+            const noteClosure = async (ticketId: number): Promise<number> => {
+              const esc = await escalateOnRepeat(escalationDeps, ticketId, callStartMs, payload.transcript);
+              await this.autotaskService.createTicketNote(esc.ticketId, {
+                title: 'Ivy Call Closure Update',
+                description: esc.line ? `${description}\n\n${esc.line}` : description,
+                noteType: 1, // General
+                publish: 2,  // Internal Only (verified against live tenant ticket 53302)
+              });
+              if (esc.line || esc.ticketId !== ticketId) {
+                this.logger.info('Call closure: repeat escalation', {
+                  boundTicketId: ticketId, notedTicketId: esc.ticketId, line: esc.line,
+                  conversationId: payload.conversation_id,
+                });
+              }
+              return esc.ticketId;
+            };
+
             // -- Idempotency: check if Ivy already created a ticket mid-call --
             const existingTicketNumber = dataCollection.support_ticket_number?.value ?? null;
             if (existingTicketNumber) {
@@ -2012,21 +2046,16 @@ export class AutotaskMcpServer {
                 const tickets = await this.autotaskService.searchTickets({ searchTerm: existingTicketNumber });
                 if (tickets.length > 0) {
                   const existing = tickets[0];
-                  await this.autotaskService.createTicketNote(existing.id!, {
-                    title: 'Ivy Call Closure Update',
-                    description: description,
-                    noteType: 1, // General
-                    publish: 2,  // Internal Only (verified against live tenant ticket 53302)
-                  });
+                  const notedId = await noteClosure(existing.id!);
                   this.logger.info('Call closure: added note to existing ticket', {
-                    ticketId: existing.id,
+                    ticketId: notedId,
                     ticketNumber: existing.ticketNumber,
                     conversationId: payload.conversation_id,
                   });
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   res.end(JSON.stringify({
-                    ticket_id: existing.id,
-                    ticket_number: existing.ticketNumber,
+                    ticket_id: notedId,
+                    ticket_number: notedId === existing.id ? existing.ticketNumber : undefined,
                     action: 'updated',
                   }));
                   return;
@@ -2124,17 +2153,12 @@ export class AutotaskMcpServer {
             const lockedTicketId = parseInt(String(dynVars.locked_ticket_id ?? ''), 10);
             if (!existingTicketNumber && Number.isFinite(lockedTicketId) && lockedTicketId > 0 && lockedTicketId < 1000000) {
               try {
-                await this.autotaskService.createTicketNote(lockedTicketId, {
-                  title: 'Ivy Call Closure Update',
-                  description,
-                  noteType: 1,
-                  publish: 2,
-                });
+                const notedId = await noteClosure(lockedTicketId);
                 this.logger.info('Call closure: bound via locked_ticket_id', {
-                  ticketId: lockedTicketId, conversationId: payload.conversation_id,
+                  ticketId: notedId, conversationId: payload.conversation_id,
                 });
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ ticket_id: lockedTicketId, action: 'updated' }));
+                res.end(JSON.stringify({ ticket_id: notedId, action: 'updated' }));
                 return;
               } catch (bindErr) {
                 this.logger.warn('Call closure: locked_ticket_id bind failed, falling through', {
@@ -2147,19 +2171,14 @@ export class AutotaskMcpServer {
               const workedTicketId = findWorkedTicketId();
               if (workedTicketId) {
                 try {
-                  await this.autotaskService.createTicketNote(workedTicketId, {
-                    title: 'Ivy Call Closure Update',
-                    description,
-                    noteType: 1,
-                    publish: 2,
-                  });
+                  const notedId = await noteClosure(workedTicketId);
                   this.logger.info('Call closure: bound to ticket from tool history', {
-                    ticketId: workedTicketId,
+                    ticketId: notedId,
                     conversationId: payload.conversation_id,
                   });
                   res.writeHead(200, { 'Content-Type': 'application/json' });
                   res.end(JSON.stringify({
-                    ticket_id: workedTicketId,
+                    ticket_id: notedId,
                     action: 'updated',
                   }));
                   return;
@@ -2198,12 +2217,7 @@ export class AutotaskMcpServer {
                 );
                 if (candidates.length === 1) {
                   const only = candidates[0];
-                  await this.autotaskService.createTicketNote(only.id!, {
-                    title: 'Ivy Call Closure Update',
-                    description,
-                    noteType: 1,
-                    publish: 2,
-                  });
+                  await noteClosure(only.id!);
                   this.logger.info('Call closure: silent caller bound to sole open ticket', {
                     ticketId: only.id,
                     ticketNumber: only.ticketNumber,
@@ -2254,6 +2268,17 @@ export class AutotaskMcpServer {
               status: this.ticketPicklistIds.statusNew,
               priority: this.ticketPicklistIds.priorityNormal,
             };
+
+            // A new ticket can still be a repeat: the caller says they already called.
+            if (callerReportsPriorContact(payload.transcript)) {
+              try {
+                const high = (await this.picklistCache.getTicketPriorities()).find(p => priorityRank(p.label) === 3);
+                if (high) {
+                  ticket.priority = Number(high.value);
+                  ticket.description = `${description}\n\nPriority raised to High: the caller says they already called, emailed or left a message.`;
+                }
+              } catch { /* keep Medium */ }
+            }
 
             if (fullyIdentified) {
               ticket.companyID = effectiveCompanyId;
